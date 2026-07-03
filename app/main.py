@@ -28,7 +28,7 @@ def sync_emails():
     """Gelen kutusundan yeni mailleri çeker, tasnif eder, ekleri dataroom'a kaydeder."""
     try:
         messages = email_client.fetch_recent(config.SYNC_LIMIT)
-    except email_client.EmailConfigError as e:
+    except (email_client.EmailConfigError, email_client.EmailAuthError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Mail sunucusuna bağlanılamadı: {e}")
@@ -100,7 +100,7 @@ def send_reply(email_id: int, req: ReplyRequest):
             body=req.reply_text,
             in_reply_to=email_data["message_id"],
         )
-    except email_client.EmailConfigError as e:
+    except (email_client.EmailConfigError, email_client.EmailAuthError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gönderim başarısız: {e}")

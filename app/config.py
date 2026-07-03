@@ -9,8 +9,15 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # E-posta hesabı (Gmail için uygulama şifresi kullanın: https://myaccount.google.com/apppasswords)
-EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS", "")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "")
+EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS", "").strip()
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
+
+# Google uygulama şifreleri "xxxx xxxx xxxx xxxx" biçiminde gösterilir;
+# boşluklu yapıştırılırsa boşlukları temizle (diğer sağlayıcı şifrelerine dokunma).
+import re as _re
+
+if _re.fullmatch(r"([A-Za-z]{4} ){3}[A-Za-z]{4}", EMAIL_PASSWORD):
+    EMAIL_PASSWORD = EMAIL_PASSWORD.replace(" ", "")
 
 IMAP_HOST = os.environ.get("IMAP_HOST", "imap.gmail.com")
 IMAP_PORT = int(os.environ.get("IMAP_PORT", "993"))

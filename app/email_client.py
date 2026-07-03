@@ -15,6 +15,19 @@ class EmailConfigError(Exception):
     pass
 
 
+class EmailAuthError(Exception):
+    pass
+
+
+AUTH_HELP = (
+    "Gmail giriş bilgileri reddedildi. Kontrol listesi: "
+    "1) EMAIL_PASSWORD normal Gmail şifreniz DEĞİL, 16 haneli uygulama şifresi olmalı "
+    "(https://myaccount.google.com/apppasswords — önce 2 Adımlı Doğrulama açık olmalı). "
+    "2) .env dosyasını düzenledikten sonra sunucuyu yeniden başlatın. "
+    "3) EMAIL_ADDRESS tam adres olmalı (ornek@gmail.com)."
+)
+
+
 def _require_credentials():
     if not config.EMAIL_ADDRESS or not config.EMAIL_PASSWORD:
         raise EmailConfigError(
@@ -91,7 +104,12 @@ def fetch_recent(limit: int) -> list[dict]:
     _require_credentials()
     conn = imaplib.IMAP4_SSL(config.IMAP_HOST, config.IMAP_PORT)
     try:
-        conn.login(config.EMAIL_ADDRESS, config.EMAIL_PASSWORD)
+        try:
+            conn.login(config.EMAIL_ADDRESS, config.EMAIL_PASSWORD)
+        except imaplib.IMAP4.error as e:
+            if "AUTHENTICATIONFAILED" in str(e).upper():
+                raise EmailAuthError(AUTH_HELP) from e
+            raise
         conn.select("INBOX", readonly=True)
         status, data = conn.uid("SEARCH", None, "ALL")
         if status != "OK":
@@ -143,5 +161,8 @@ def send_reply(to_address: str, subject: str, body: str, in_reply_to: str | None
         msg["References"] = in_reply_to
     msg.set_content(body)
     with smtplib.SMTP_SSL(config.SMTP_HOST, config.SMTP_PORT) as smtp:
-        smtp.login(config.EMAIL_ADDRESS, config.EMAIL_PASSWORD)
+        try:
+            smtp.login(config.EMAIL_ADDRESS, config.EMAIL_PASSWORD)
+        except smtplib.SMTPAuthenticationError as e:
+            raise EmailAuthError(AUTH_HELP) from e
         smtp.send_message(msg)
