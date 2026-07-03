@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meil — E-posta Asistanı</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>📬 Meil</h1>
+    <span class="subtitle">E-posta tasnif &amp; yanıt asistanı</span>
+    <div class="header-actions">
+      <span id="account-info"></span>
+      <button id="sync-btn" class="primary">Mailleri Getir</button>
+    </div>
+  </header>
+
+  <nav id="tabs">
+    <button class="tab active" data-view="inbox">Gelen Kutusu</button>
+    <button class="tab" data-view="dataroom">Dataroom</button>
+  </nav>
+
+  <main id="view-inbox">
+    <aside id="sidebar">
+      <button class="cat-btn active" data-cat="">Tümü <span class="count" id="count-all"></span></button>
+      <div id="category-list"></div>
+    </aside>
+
+    <section id="email-list"></section>
+
+    <section id="email-detail">
+      <div class="placeholder">Bir mail seçin</div>
+    </section>
+  </main>
+
+  <main id="view-dataroom" style="display:none">
+    <section id="dataroom-list"></section>
+  </main>
+
+  <div id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
