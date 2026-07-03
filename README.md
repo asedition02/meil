@@ -1,6 +1,6 @@
 # 📬 Meil — E-posta Tasnif & Yanıt Asistanı
 
-Gmail (veya herhangi bir IMAP) hesabınıza bağlanır ve:
+Microsoft Teams görünümlü arayüzüyle **birden fazla mail hesabına** (Gmail, Outlook / Microsoft 365, Yahoo, Yandex veya şirket IMAP sunucusu) bağlanır ve:
 
 1. **Tasnif eder** — Gelen mailleri Claude ile kategorilere ayırır (Önemli, İş, Kişisel, Fatura/Finans, Bülten, Tanıtım/Reklam, Spam, Diğer) ve öncelik atar.
 2. **Okur ve özetler** — Her mail için 1-3 cümlelik Türkçe özet çıkarır.
@@ -21,18 +21,26 @@ cp .env.example .env
 uvicorn app.main:app --port 8000
 ```
 
-Tarayıcıda **http://localhost:8000** adresini açın ve **"Mailleri Getir"** butonuna tıklayın.
+Tarayıcıda **http://localhost:8000** adresini açın:
+
+1. **Hesaplar** sekmesinden mail hesaplarınızı ekleyin — sağlayıcı seçin (Gmail, Outlook / Microsoft 365, Yahoo, Yandex) veya "Şirket / Özel" ile kendi IMAP/SMTP sunucunuzu girin. Uygulama kaydetmeden önce bağlantıyı test eder.
+2. Sağ üstteki **"⟳ Eşitle"** butonuna tıklayın — tüm hesapların gelen kutuları taranır ve tasnif edilir.
+3. Posta sekmesinde hesaba ve kategoriye göre filtreleyebilirsiniz. Yanıtlar, maili alan hesabın kendi SMTP sunucusundan gönderilir.
 
 ## `.env` ayarları
 
 | Değişken | Açıklama |
 |---|---|
-| `EMAIL_ADDRESS` | Gmail adresiniz |
-| `EMAIL_PASSWORD` | Gmail **uygulama şifresi** — normal şifreniz çalışmaz. [Buradan oluşturun](https://myaccount.google.com/apppasswords) (2 Adımlı Doğrulama açık olmalı) |
-| `ANTHROPIC_API_KEY` | Claude API anahtarı — [platform.claude.com](https://platform.claude.com) |
+| `ANTHROPIC_API_KEY` | Claude API anahtarı — [platform.claude.com](https://platform.claude.com) (zorunlu) |
 | `USER_NAME` | Yanıt taslaklarında imza olarak kullanılacak adınız |
-| `SYNC_LIMIT` | Her eşitlemede işlenecek en fazla mail sayısı (varsayılan 25) |
-| `IMAP_HOST` / `SMTP_HOST` | Gmail dışı sağlayıcı için değiştirin |
+| `SYNC_LIMIT` | Her eşitlemede hesap başına işlenecek en fazla mail sayısı (varsayılan 25) |
+| `EMAIL_ADDRESS` vb. | İsteğe bağlı — ilk hesabı arayüz yerine buradan tanımlamak isterseniz |
+
+### Hesap türlerine göre notlar
+
+- **Gmail / Yahoo / Yandex:** Normal şifre çalışmaz; **uygulama şifresi** gerekir (Gmail: [buradan](https://myaccount.google.com/apppasswords), önce 2 Adımlı Doğrulama açık olmalı).
+- **Şirket maili:** IMAP/SMTP sunucu adreslerini ve portları BT ekibinizden öğrenin. IMAP genellikle 993 (SSL), SMTP 465 (SSL) veya 587 (STARTTLS) kullanır.
+- **Microsoft 365:** Şirket kiracınızda (tenant) IMAP erişimi kapalıysa BT yöneticinizin açması gerekir.
 
 ## Nasıl çalışır?
 

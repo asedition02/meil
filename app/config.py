@@ -8,21 +8,16 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# E-posta hesabı (Gmail için uygulama şifresi kullanın: https://myaccount.google.com/apppasswords)
+# İlk açılışta otomatik hesap oluşturmak için (isteğe bağlı — hesaplar
+# artık arayüzden de eklenebiliyor). Gmail için uygulama şifresi kullanın:
+# https://myaccount.google.com/apppasswords
 EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS", "").strip()
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
-
-# Google uygulama şifreleri "xxxx xxxx xxxx xxxx" biçiminde gösterilir;
-# boşluklu yapıştırılırsa boşlukları temizle (diğer sağlayıcı şifrelerine dokunma).
-import re as _re
-
-if _re.fullmatch(r"([A-Za-z]{4} ){3}[A-Za-z]{4}", EMAIL_PASSWORD):
-    EMAIL_PASSWORD = EMAIL_PASSWORD.replace(" ", "")
-
 IMAP_HOST = os.environ.get("IMAP_HOST", "imap.gmail.com")
 IMAP_PORT = int(os.environ.get("IMAP_PORT", "993"))
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
+SMTP_SECURITY = os.environ.get("SMTP_SECURITY", "ssl")
 
 # Claude API
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -33,7 +28,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))
 DATAROOM_DIR = Path(os.environ.get("DATAROOM_DIR", DATA_DIR / "dataroom"))
 DB_PATH = Path(os.environ.get("DB_PATH", DATA_DIR / "meil.db"))
 
-# Her eşitlemede en fazla kaç yeni mail işlensin
+# Her eşitlemede hesap başına en fazla kaç yeni mail işlensin
 SYNC_LIMIT = int(os.environ.get("SYNC_LIMIT", "25"))
 
 # Kullanıcının imzası / yanıtlarda kullanılacak isim

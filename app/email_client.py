@@ -1,4 +1,4 @@
-"""IMAP ile mail çekme, SMTP ile mail gönderme."""
+"""IMAP ile mail çekme, SMTP ile mail gönderme — hesap bazlı."""
 import email
 import email.policy
 import imaplib
@@ -7,8 +7,6 @@ import smtplib
 from email.header import decode_header, make_header
 from email.message import EmailMessage
 from email.utils import parseaddr, parsedate_to_datetime
-
-from . import config
 
 
 class EmailConfigError(Exception):
@@ -19,21 +17,48 @@ class EmailAuthError(Exception):
     pass
 
 
-AUTH_HELP = (
-    "Gmail giriş bilgileri reddedildi. Kontrol listesi: "
-    "1) EMAIL_PASSWORD normal Gmail şifreniz DEĞİL, 16 haneli uygulama şifresi olmalı "
-    "(https://myaccount.google.com/apppasswords — önce 2 Adımlı Doğrulama açık olmalı). "
-    "2) .env dosyasını düzenledikten sonra sunucuyu yeniden başlatın. "
-    "3) EMAIL_ADDRESS tam adres olmalı (ornek@gmail.com)."
-)
+# Bilinen sağlayıcı ayarları — "Şirket / Özel" için kullanıcı kendisi girer
+PRESETS = {
+    "gmail": {
+        "imap_host": "imap.gmail.com", "imap_port": 993,
+        "smtp_host": "smtp.gmail.com", "smtp_port": 465, "smtp_security": "ssl",
+    },
+    "outlook": {
+        "imap_host": "outlook.office365.com", "imap_port": 993,
+        "smtp_host": "smtp.office365.com", "smtp_port": 587, "smtp_security": "starttls",
+    },
+    "yahoo": {
+        "imap_host": "imap.mail.yahoo.com", "imap_port": 993,
+        "smtp_host": "smtp.mail.yahoo.com", "smtp_port": 465, "smtp_security": "ssl",
+    },
+    "yandex": {
+        "imap_host": "imap.yandex.com", "imap_port": 993,
+        "smtp_host": "smtp.yandex.com", "smtp_port": 465, "smtp_security": "ssl",
+    },
+}
 
 
-def _require_credentials():
-    if not config.EMAIL_ADDRESS or not config.EMAIL_PASSWORD:
-        raise EmailConfigError(
-            "EMAIL_ADDRESS ve EMAIL_PASSWORD ayarlanmalı. Gmail için uygulama "
-            "şifresi oluşturun: https://myaccount.google.com/apppasswords"
-        )
+def auth_help(account_email: str) -> str:
+    return (
+        f"{account_email} için giriş reddedildi. Kontrol listesi: "
+        "1) Gmail/Yahoo/Yandex için normal şifre değil, UYGULAMA ŞİFRESİ gerekir. "
+        "2) Şirket maili için IMAP erişiminin açık olduğunu BT ekibinize sorun. "
+        "3) Sunucu adreslerini ve portları kontrol edin."
+    )
+
+
+def _normalize_password(password: str) -> str:
+    """Google uygulama şifresi 'xxxx xxxx xxxx xxxx' biçiminde yapıştırılırsa boşlukları sil."""
+    password = password.strip()
+    if re.fullmatch(r"([A-Za-z]{4} ){3}[A-Za-z]{4}", password):
+        password = password.replace(" ", "")
+    return password
+
+
+def _validate(account: dict):
+    for key in ("email", "password", "imap_host", "smtp_host"):
+        if not account.get(key):
+            raise EmailConfigError(f"Hesap ayarı eksik: {key}")
 
 
 def _decode(value: str | None) -> str:
@@ -99,17 +124,41 @@ def _extract_attachments(msg: email.message.Message) -> list[tuple[str, bytes]]:
     return out
 
 
-def fetch_recent(limit: int) -> list[dict]:
-    """Gelen kutusundaki en son `limit` maili döndürür (en yeniden eskiye)."""
-    _require_credentials()
-    conn = imaplib.IMAP4_SSL(config.IMAP_HOST, config.IMAP_PORT)
+def _imap_login(account: dict) -> imaplib.IMAP4_SSL:
+    conn = imaplib.IMAP4_SSL(account["imap_host"], int(account.get("imap_port") or 993))
     try:
+        conn.login(account["email"], _normalize_password(account["password"]))
+    except imaplib.IMAP4.error as e:
         try:
-            conn.login(config.EMAIL_ADDRESS, config.EMAIL_PASSWORD)
-        except imaplib.IMAP4.error as e:
-            if "AUTHENTICATIONFAILED" in str(e).upper():
-                raise EmailAuthError(AUTH_HELP) from e
-            raise
+            conn.logout()
+        except Exception:
+            pass
+        if "AUTHENTICATIONFAILED" in str(e).upper():
+            raise EmailAuthError(auth_help(account["email"])) from e
+        raise
+    return conn
+
+
+def test_login(account: dict):
+    """Hesap eklerken IMAP ve SMTP girişini doğrular."""
+    _validate(account)
+    conn = _imap_login(account)
+    try:
+        conn.select("INBOX", readonly=True)
+    finally:
+        try:
+            conn.logout()
+        except Exception:
+            pass
+    with _smtp_connect(account) as smtp:
+        pass  # login başarılıysa yeterli
+
+
+def fetch_recent(account: dict, limit: int) -> list[dict]:
+    """Hesabın gelen kutusundaki en son `limit` maili döndürür."""
+    _validate(account)
+    conn = _imap_login(account)
+    try:
         conn.select("INBOX", readonly=True)
         status, data = conn.uid("SEARCH", None, "ALL")
         if status != "OK":
@@ -131,6 +180,7 @@ def fetch_recent(limit: int) -> list[dict]:
                 date = msg.get("Date", "")
             results.append(
                 {
+                    "account_id": account.get("id"),
                     "imap_uid": uid.decode(),
                     "message_id": msg.get("Message-ID", "").strip() or f"uid:{uid.decode()}",
                     "sender_name": sender_name,
@@ -149,20 +199,34 @@ def fetch_recent(limit: int) -> list[dict]:
             pass
 
 
-def send_reply(to_address: str, subject: str, body: str, in_reply_to: str | None = None):
-    """Onaylanan yanıtı SMTP üzerinden gönderir."""
-    _require_credentials()
+def _smtp_connect(account: dict) -> smtplib.SMTP:
+    host = account["smtp_host"]
+    port = int(account.get("smtp_port") or 465)
+    security = account.get("smtp_security") or "ssl"
+    if security == "starttls":
+        smtp = smtplib.SMTP(host, port, timeout=30)
+        smtp.starttls()
+    else:
+        smtp = smtplib.SMTP_SSL(host, port, timeout=30)
+    try:
+        smtp.login(account["email"], _normalize_password(account["password"]))
+    except smtplib.SMTPAuthenticationError as e:
+        smtp.close()
+        raise EmailAuthError(auth_help(account["email"])) from e
+    return smtp
+
+
+def send_reply(account: dict, to_address: str, subject: str, body: str,
+               in_reply_to: str | None = None):
+    """Onaylanan yanıtı, maili alan hesabın SMTP sunucusundan gönderir."""
+    _validate(account)
     msg = EmailMessage()
-    msg["From"] = config.EMAIL_ADDRESS
+    msg["From"] = account["email"]
     msg["To"] = to_address
     msg["Subject"] = subject if subject.lower().startswith("re:") else f"Re: {subject}"
     if in_reply_to and not in_reply_to.startswith("uid:"):
         msg["In-Reply-To"] = in_reply_to
         msg["References"] = in_reply_to
     msg.set_content(body)
-    with smtplib.SMTP_SSL(config.SMTP_HOST, config.SMTP_PORT) as smtp:
-        try:
-            smtp.login(config.EMAIL_ADDRESS, config.EMAIL_PASSWORD)
-        except smtplib.SMTPAuthenticationError as e:
-            raise EmailAuthError(AUTH_HELP) from e
+    with _smtp_connect(account) as smtp:
         smtp.send_message(msg)
