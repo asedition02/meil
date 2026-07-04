@@ -8,39 +8,50 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <!-- Üst mor bar (Teams) -->
+  <!-- Üst bar -->
   <div id="topbar">
-    <div class="topbar-title">Meil</div>
-    <div class="topbar-search">🔍 <input id="search-input" placeholder="Ara (gönderen, konu, özet)"></div>
+    <div class="brand"><span class="brand-mark">M</span><span class="brand-name">Meil</span></div>
+    <div class="topbar-search">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="search-input" placeholder="Ara — gönderen, konu, özet">
+      <kbd>/</kbd>
+    </div>
     <div class="topbar-right">
-      <button id="sync-btn" title="Yeni mailleri getir ve tasnif et">⟳ Eşitle</button>
+      <button id="sync-btn" class="pill accent">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>
+        <span>Eşitle</span>
+      </button>
+      <button id="theme-toggle" class="icon-btn" title="Tema değiştir">🌙</button>
       <div class="avatar small" id="me-avatar">M</div>
     </div>
   </div>
 
   <div id="layout">
-    <!-- Sol uygulama rayı (Teams) -->
+    <!-- Sol ray -->
     <nav id="rail">
       <button class="rail-btn active" data-view="inbox" title="Posta">
-        <span class="rail-icon">✉️</span><span class="rail-label">Posta</span>
+        <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m3 8 8.1 5.4a2 2 0 0 0 1.8 0L21 8"/></svg></span>
+        <span class="rail-label">Posta</span>
       </button>
       <button class="rail-btn" data-view="dataroom" title="Dataroom">
-        <span class="rail-icon">📁</span><span class="rail-label">Dataroom</span>
+        <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>
+        <span class="rail-label">Dataroom</span>
       </button>
       <button class="rail-btn" data-view="accounts" title="Hesaplar">
-        <span class="rail-icon">👥</span><span class="rail-label">Hesaplar</span>
+        <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 19c.8-3 3.4-5 6.5-5s5.7 2 6.5 5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16.5 14.2c2.4.4 4.3 2 5 4.8"/></svg></span>
+        <span class="rail-label">Hesaplar</span>
       </button>
     </nav>
 
-    <!-- POSTA görünümü -->
+    <!-- POSTA -->
     <main id="view-inbox" class="view">
       <section id="list-panel">
         <div class="panel-header">
-          <h2>Posta</h2>
-          <div class="filters">
-            <select id="account-filter" title="Hesap"></select>
-            <select id="category-filter" title="Kategori"></select>
+          <div class="panel-title-row">
+            <h2>Gelen Kutusu</h2>
+            <select id="account-filter" class="pill-select" title="Hesap"></select>
           </div>
+          <div id="category-chips" class="chips"></div>
         </div>
         <div id="email-list"></div>
       </section>
@@ -52,24 +63,24 @@
       </section>
     </main>
 
-    <!-- DATAROOM görünümü -->
+    <!-- DATAROOM -->
     <main id="view-dataroom" class="view" style="display:none">
       <div class="page">
-        <h2 class="page-title">📁 Dataroom</h2>
+        <h2 class="page-title">Dataroom</h2>
         <p class="page-desc">Gelen maillerin ekleri burada gönderen ve tarihe göre saklanır.</p>
         <div id="dataroom-list"></div>
       </div>
     </main>
 
-    <!-- HESAPLAR görünümü -->
+    <!-- HESAPLAR -->
     <main id="view-accounts" class="view" style="display:none">
       <div class="page">
-        <h2 class="page-title">👥 Mail Hesapları</h2>
+        <h2 class="page-title">Mail Hesapları</h2>
         <p class="page-desc">Birden fazla hesap ekleyebilirsiniz — Gmail, Outlook / Microsoft 365 veya şirket mail sunucunuz. Eşitlemede tüm hesapların gelen kutuları taranır.</p>
         <div id="account-cards"></div>
 
         <div class="card form-card">
-          <h3>➕ Hesap Ekle</h3>
+          <h3>Hesap Ekle</h3>
           <div class="form-grid">
             <label>Sağlayıcı
               <select id="acc-provider">
@@ -105,7 +116,7 @@
           </div>
 
           <p class="hint" id="provider-hint"></p>
-          <button class="primary" id="acc-save">Bağlantıyı Test Et ve Ekle</button>
+          <button class="pill accent" id="acc-save">Bağlantıyı Test Et ve Ekle</button>
         </div>
       </div>
     </main>

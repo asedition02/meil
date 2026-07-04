@@ -11,7 +11,7 @@ let state = {
 
 const $ = (sel) => document.querySelector(sel);
 
-const AVATAR_COLORS = ["#6264a7", "#c4314b", "#237b4b", "#835c00", "#0078d4", "#8764b8", "#ca5010"];
+const AVATAR_COLORS = ["#0f8a6d", "#d64550", "#2563eb", "#b06d0a", "#7c3aed", "#0e7490", "#be5a0e"];
 
 function avatarColor(text) {
   let h = 0;
@@ -59,8 +59,8 @@ function formatDate(iso) {
   try {
     const d = new Date(iso);
     const now = new Date();
-    const sameDay = d.toDateString() === now.toDateString();
-    if (sameDay) return d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+    if (d.toDateString() === now.toDateString())
+      return d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
     return d.toLocaleDateString("tr-TR", { day: "2-digit", month: "short" });
   } catch { return iso; }
 }
@@ -79,6 +79,30 @@ function formatSize(bytes) {
   if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
   return (bytes / 1048576).toFixed(1) + " MB";
 }
+
+// ---- Tema ----
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $("#theme-toggle").textContent = theme === "dark" ? "☀️" : "🌙";
+  localStorage.setItem("meil-theme", theme);
+}
+$("#theme-toggle").onclick = () => {
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+};
+applyTheme(
+  localStorage.getItem("meil-theme") ||
+  (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+);
+
+// ---- Klavye kısayolu: / ile arama ----
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) {
+    e.preventDefault();
+    $("#search-input").focus();
+  }
+});
 
 // ---- Görünüm geçişi ----
 
@@ -110,13 +134,19 @@ async function loadEmails() {
 }
 
 function renderFilters() {
-  const catSel = $("#category-filter");
   const total = Object.values(state.counts).reduce((a, b) => a + b, 0);
-  catSel.innerHTML =
-    `<option value="">Tüm kategoriler (${total})</option>` +
+  const chips = $("#category-chips");
+  const chipHtml = (value, label, n) =>
+    `<button class="chip${state.activeCategory === value ? " active" : ""}" data-cat="${esc(value)}">${esc(label)}${n ? `<span class="n">${n}</span>` : ""}</button>`;
+  chips.innerHTML =
+    chipHtml("", "Tümü", total) +
     state.categories
-      .map((c) => `<option value="${esc(c)}" ${state.activeCategory === c ? "selected" : ""}>${esc(c)} (${state.counts[c] || 0})</option>`)
+      .filter((c) => state.counts[c] || state.activeCategory === c)
+      .map((c) => chipHtml(c, c, state.counts[c] || 0))
       .join("");
+  chips.querySelectorAll(".chip").forEach((chip) => {
+    chip.onclick = () => { state.activeCategory = chip.dataset.cat; loadEmails(); };
+  });
 
   const accSel = $("#account-filter");
   accSel.innerHTML =
@@ -126,7 +156,6 @@ function renderFilters() {
       .join("");
 }
 
-$("#category-filter").onchange = (e) => { state.activeCategory = e.target.value; loadEmails(); };
 $("#account-filter").onchange = (e) => { state.activeAccount = e.target.value; loadEmails(); };
 $("#search-input").oninput = (e) => { state.search = e.target.value.toLowerCase(); renderList(); };
 
@@ -143,7 +172,7 @@ function renderList() {
   const emails = visibleEmails();
   if (!emails.length) {
     list.innerHTML = `<div class="placeholder" style="margin-top:60px">
-      ${state.emails.length ? "Aramayla eşleşen mail yok." : 'Mail yok. Sağ üstten "⟳ Eşitle"ye tıklayın.'}
+      ${state.emails.length ? "Aramayla eşleşen mail yok." : 'Mail yok. Sağ üstten "Eşitle"ye tıklayın.'}
     </div>`;
     return;
   }
@@ -187,13 +216,13 @@ async function selectEmail(id) {
 
 function renderDetail(e) {
   const attachments = e.attachments.length
-    ? `<div class="card"><h3>Ekler — dataroom'a kaydedildi</h3><div class="attachment-list">
-        ${e.attachments.map((a) => `<a href="/api/dataroom/download?path=${encodeURIComponent(a.path)}">📎 ${esc(a.filename)} <span style="color:var(--t-muted)">(${formatSize(a.size)})</span></a>`).join("")}
+    ? `<div class="card"><h3>📎 Ekler — dataroom'a kaydedildi</h3><div class="attachment-list">
+        ${e.attachments.map((a) => `<a href="/api/dataroom/download?path=${encodeURIComponent(a.path)}">${esc(a.filename)} <span class="size">${formatSize(a.size)}</span></a>`).join("")}
        </div></div>`
     : "";
 
   const acctInfo = e.account_email
-    ? `<span class="badge acct">${esc(e.account_name || e.account_email)} hesabına geldi</span>`
+    ? `<span class="badge acct">${esc(e.account_name || e.account_email)}</span>`
     : "";
 
   $("#detail-panel").innerHTML = `
@@ -213,13 +242,13 @@ function renderDetail(e) {
     <div class="card summary-card"><h3>✨ Özet</h3><p>${esc(e.summary || "")}</p></div>
     ${attachments}
     <div class="card">
-      <h3>Yanıt Taslağı ${e.status === "replied" ? "— ✓ gönderildi" : "(onayınızla gönderilir)"}</h3>
+      <h3>Yanıt Taslağı ${e.status === "replied" ? "— ✓ gönderildi" : "· onayınızla gönderilir"}</h3>
       <textarea id="reply-text" placeholder="Yanıt taslağı...">${esc(e.suggested_reply || "")}</textarea>
       <div class="reply-actions">
-        <button class="primary" id="send-btn" ${e.status === "replied" ? "disabled" : ""}>➤ Onayla ve Gönder</button>
+        <button class="pill accent" id="send-btn" ${e.status === "replied" ? "disabled" : ""}>➤ Onayla ve Gönder</button>
         <input id="regen-instruction" placeholder="İsteğe bağlı talimat (ör: daha resmi yaz, toplantı öner...)">
-        <button class="secondary" id="regen-btn">↻ Yeniden Öner</button>
-        <button class="secondary" id="archive-btn">Arşivle</button>
+        <button class="pill ghost" id="regen-btn">↻ Yeniden Öner</button>
+        <button class="pill ghost" id="archive-btn">Arşivle</button>
       </div>
     </div>
     <div class="card"><h3>Mail İçeriği</h3><div class="body-text">${esc(e.body_text || "(içerik yok)")}</div></div>
@@ -273,7 +302,7 @@ function renderDetail(e) {
 $("#sync-btn").onclick = async () => {
   const btn = $("#sync-btn");
   btn.disabled = true;
-  btn.textContent = "⟳ Eşitleniyor...";
+  btn.querySelector("span").textContent = "Eşitleniyor...";
   try {
     const data = await api("/api/sync", { method: "POST" });
     const failed = data.results.filter((r) => r.errors.length);
@@ -286,7 +315,7 @@ $("#sync-btn").onclick = async () => {
     toast(err.message, true);
   } finally {
     btn.disabled = false;
-    btn.textContent = "⟳ Eşitle";
+    btn.querySelector("span").textContent = "Eşitle";
   }
 };
 
@@ -339,7 +368,7 @@ async function loadAccounts() {
             <div class="name">${esc(a.display_name || a.email)}</div>
             <div class="detail">${esc(a.email)} · IMAP: ${esc(a.imap_host)}:${a.imap_port} · SMTP: ${esc(a.smtp_host)}:${a.smtp_port} (${esc(a.smtp_security)})</div>
           </div>
-          <button class="danger" data-del="${a.id}">Kaldır</button>
+          <button class="pill danger-ghost" data-del="${a.id}">Kaldır</button>
         </div>`)
       .join("");
     holder.querySelectorAll("[data-del]").forEach((btn) => {
