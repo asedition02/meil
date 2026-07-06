@@ -67,3 +67,34 @@ def resolve_file(rel_path: str) -> Path:
     if not target.is_relative_to(root) or not target.is_file():
         raise FileNotFoundError(rel_path)
     return target
+
+
+def save_upload(folder: str, filename: str, content: bytes) -> dict:
+    """Kullanıcının yüklediği dosyayı dataroom'a kaydeder."""
+    parts = [_safe_name(p) for p in (folder or "").split("/") if p.strip()]
+    target_dir = config.DATAROOM_DIR.joinpath(*parts) if parts else config.DATAROOM_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    name = _safe_name(filename)
+    target = target_dir / name
+    counter = 1
+    while target.exists():
+        stem, suffix = os.path.splitext(name)
+        target = target_dir / f"{stem}_{counter}{suffix}"
+        counter += 1
+    target.write_bytes(content)
+    return {
+        "filename": target.name,
+        "path": str(target.relative_to(config.DATAROOM_DIR)),
+        "size": len(content),
+    }
+
+
+def delete_file(rel_path: str):
+    """Dosyayı siler; boşalan klasörleri temizler."""
+    target = resolve_file(rel_path)
+    root = config.DATAROOM_DIR.resolve()
+    target.unlink()
+    parent = target.parent
+    while parent != root and parent.is_dir() and not any(parent.iterdir()):
+        parent.rmdir()
+        parent = parent.parent

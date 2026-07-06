@@ -230,3 +230,22 @@ def send_reply(account: dict, to_address: str, subject: str, body: str,
     msg.set_content(body)
     with _smtp_connect(account) as smtp:
         smtp.send_message(msg)
+
+
+def send_message(account: dict, to_address: str, subject: str, body: str,
+                 attachments: list[tuple[str, bytes]] | None = None):
+    """Yeni bir mail gönderir; isteğe bağlı ekli dosyalarla (dataroom gönderimi)."""
+    import mimetypes
+
+    _validate(account)
+    msg = EmailMessage()
+    msg["From"] = account["email"]
+    msg["To"] = to_address
+    msg["Subject"] = subject
+    msg.set_content(body)
+    for filename, payload in attachments or []:
+        ctype, _ = mimetypes.guess_type(filename)
+        maintype, _, subtype = (ctype or "application/octet-stream").partition("/")
+        msg.add_attachment(payload, maintype=maintype, subtype=subtype, filename=filename)
+    with _smtp_connect(account) as smtp:
+        smtp.send_message(msg)

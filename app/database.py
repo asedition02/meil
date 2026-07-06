@@ -67,6 +67,14 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_start ON events(start);
 CREATE INDEX IF NOT EXISTS idx_events_calendar ON events(calendar_id);
+
+CREATE TABLE IF NOT EXISTS dataroom_meta (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    path TEXT UNIQUE,                   -- dataroom köküne göre dosya yolu
+    note TEXT,
+    share_token TEXT UNIQUE,
+    created_at TEXT DEFAULT (datetime('now'))
+);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_msgid_account
     ON emails(message_id, account_id);
 CREATE INDEX IF NOT EXISTS idx_emails_category ON emails(category);
@@ -285,6 +293,59 @@ def get_event(event_id: int) -> dict | None:
     with get_db() as db:
         row = db.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
         return dict(row) if row else None
+
+
+# ---- Dataroom meta (not + paylaşım linki) ----
+
+def all_file_meta() -> dict:
+    """path → {note, share_token} eşlemesi."""
+    with get_db() as db:
+        rows = db.execute("SELECT path, note, share_token FROM dataroom_meta").fetchall()
+        return {r["path"]: {"note": r["note"], "share_token": r["share_token"]} for r in rows}
+
+
+def set_file_note(path: str, note: str):
+    with get_db() as db:
+        db.execute(
+            """INSERT INTO dataroom_meta (path, note) VALUES (?, ?)
+               ON CONFLICT(path) DO UPDATE SET note = excluded.note""",
+            (path, note),
+        )
+
+
+def set_share_token(path: str, token: str):
+    with get_db() as db:
+        db.execute(
+            """INSERT INTO dataroom_meta (path, share_token) VALUES (?, ?)
+               ON CONFLICT(path) DO UPDATE SET share_token = excluded.share_token""",
+            (path, token),
+        )
+
+
+def get_share_token(path: str) -> str | None:
+    with get_db() as db:
+        row = db.execute(
+            "SELECT share_token FROM dataroom_meta WHERE path = ?", (path,)
+        ).fetchone()
+        return row["share_token"] if row else None
+
+
+def clear_share_token(path: str):
+    with get_db() as db:
+        db.execute("UPDATE dataroom_meta SET share_token = NULL WHERE path = ?", (path,))
+
+
+def get_path_by_token(token: str) -> str | None:
+    with get_db() as db:
+        row = db.execute(
+            "SELECT path FROM dataroom_meta WHERE share_token = ?", (token,)
+        ).fetchone()
+        return row["path"] if row else None
+
+
+def delete_file_meta(path: str):
+    with get_db() as db:
+        db.execute("DELETE FROM dataroom_meta WHERE path = ?", (path,))
 
 
 # ---- Mailler ----

@@ -138,9 +138,18 @@
 
     <!-- DATAROOM -->
     <main id="view-dataroom" class="view" style="display:none">
-      <div class="page">
-        <h2 class="page-title">Dataroom</h2>
-        <p class="page-desc">Gelen maillerin ekleri burada gönderen ve tarihe göre saklanır.</p>
+      <div class="page page-wide">
+        <div class="page-header">
+          <div>
+            <h2 class="page-title">Dataroom</h2>
+            <p class="page-desc">Mail ekleri otomatik olarak buraya kaydedilir. Kendi belgelerinizi de yükleyip kişisel depolama alanı olarak kullanabilirsiniz — not ekleyin, mail atın, paylaşım linkiyle paylaşın.</p>
+          </div>
+          <div class="page-actions">
+            <input id="upload-input" type="file" multiple style="display:none">
+            <button class="pill accent" id="upload-btn">⬆ Dosya Yükle</button>
+          </div>
+        </div>
+        <input id="dataroom-search" class="search-inline" placeholder="Dosya ara...">
         <div id="dataroom-list"></div>
       </div>
     </main>
@@ -193,6 +202,10 @@
         </div>
       </div>
     </main>
+  </div>
+
+  <div id="modal-overlay" style="display:none">
+    <div id="modal"></div>
   </div>
 
   <div id="toast"></div>

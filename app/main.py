@@ -2,8 +2,9 @@
 import datetime as dt
 import json
 import logging
+import secrets
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -466,18 +467,132 @@ def add_email_event(email_id: int, req: AddToCalendarRequest):
 
 # ---- Dataroom ----
 
+class NoteRequest(BaseModel):
+    path: str
+    note: str = ""
+
+
+class ShareRequest(BaseModel):
+    path: str
+
+
+class SendFileRequest(BaseModel):
+    path: str
+    to: str
+    subject: str = ""
+    message: str = ""
+    account_id: int | None = None
+
+
+def _resolve_or_404(path: str):
+    try:
+        return dataroom.resolve_file(path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Dosya bulunamadı")
+
+
 @app.get("/api/dataroom")
 def dataroom_files():
-    return {"files": dataroom.list_files()}
+    files = dataroom.list_files()
+    meta = database.all_file_meta()
+    for f in files:
+        m = meta.get(f["path"], {})
+        f["note"] = m.get("note") or ""
+        f["share_token"] = m.get("share_token")
+    return {"files": files}
 
 
 @app.get("/api/dataroom/download")
 def dataroom_download(path: str):
+    target = _resolve_or_404(path)
+    return FileResponse(target, filename=target.name)
+
+
+@app.post("/api/dataroom/upload")
+async def dataroom_upload(files: list[UploadFile] = File(...), folder: str = Form("")):
+    """Kullanıcının kendi dosyalarını dataroom'a yüklemesi."""
+    target_folder = folder.strip() or f"Yüklemelerim/{dt.date.today().isoformat()}"
+    saved = []
+    for f in files:
+        content = await f.read()
+        if not content or not f.filename:
+            continue
+        saved.append(dataroom.save_upload(target_folder, f.filename, content))
+    if not saved:
+        raise HTTPException(status_code=400, detail="Yüklenecek dosya yok")
+    return {"ok": True, "files": saved}
+
+
+@app.delete("/api/dataroom/file")
+def dataroom_delete(path: str):
+    _resolve_or_404(path)
+    dataroom.delete_file(path)
+    database.delete_file_meta(path)
+    return {"ok": True}
+
+
+@app.post("/api/dataroom/note")
+def dataroom_note(req: NoteRequest):
+    _resolve_or_404(req.path)
+    database.set_file_note(req.path, req.note.strip())
+    return {"ok": True}
+
+
+@app.post("/api/dataroom/share")
+def dataroom_share(req: ShareRequest):
+    """Dosya için paylaşım linki oluşturur (varsa mevcut linki döner)."""
+    _resolve_or_404(req.path)
+    token = database.get_share_token(req.path)
+    if not token:
+        token = secrets.token_urlsafe(16)
+        database.set_share_token(req.path, token)
+    return {"ok": True, "token": token, "url": f"/share/{token}"}
+
+
+@app.delete("/api/dataroom/share")
+def dataroom_unshare(path: str):
+    database.clear_share_token(path)
+    return {"ok": True}
+
+
+@app.get("/share/{token}")
+def shared_file(token: str):
+    """Paylaşım linki — giriş gerektirmez; linki bilen dosyayı indirebilir."""
+    path = database.get_path_by_token(token)
+    if not path:
+        raise HTTPException(status_code=404, detail="Link geçersiz veya iptal edilmiş")
     try:
         target = dataroom.resolve_file(path)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Dosya bulunamadı")
+        raise HTTPException(status_code=404, detail="Dosya artık mevcut değil")
     return FileResponse(target, filename=target.name)
+
+
+@app.post("/api/dataroom/send")
+def dataroom_send(req: SendFileRequest):
+    """Dataroom'daki bir belgeyi mail eki olarak gönderir."""
+    target = _resolve_or_404(req.path)
+    if not req.to.strip() or "@" not in req.to:
+        raise HTTPException(status_code=400, detail="Geçerli bir alıcı adresi girin")
+    if req.account_id:
+        account = database.get_account(req.account_id)
+    else:
+        accounts = database.list_accounts(include_password=True)
+        account = accounts[0] if len(accounts) == 1 else None
+    if not account:
+        raise HTTPException(status_code=400, detail="Gönderen hesap seçin")
+    subject = req.subject.strip() or f"Belge: {target.name}"
+    body = req.message.strip() or f"Merhaba,\n\n{target.name} dosyası ekte iletilmiştir.\n\nİyi çalışmalar"
+    try:
+        email_client.send_message(
+            account, req.to.strip(), subject, body,
+            attachments=[(target.name, target.read_bytes())],
+        )
+    except (email_client.EmailConfigError, email_client.EmailAuthError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Gönderim başarısız: {e}")
+    return {"ok": True}
 
 
 @app.get("/api/status")

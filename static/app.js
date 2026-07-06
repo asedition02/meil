@@ -362,28 +362,220 @@ $("#sync-btn").onclick = async () => {
   }
 };
 
+// ---- Modal ----
+
+function openModal(html) {
+  $("#modal").innerHTML = html;
+  $("#modal-overlay").style.display = "flex";
+}
+function closeModal() {
+  $("#modal-overlay").style.display = "none";
+  $("#modal").innerHTML = "";
+}
+$("#modal-overlay").onclick = (e) => { if (e.target.id === "modal-overlay") closeModal(); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+
 // ---- Dataroom ----
+
+let dataroomFiles = [];
+let dataroomSearch = "";
 
 async function loadDataroom() {
   const data = await api("/api/dataroom");
+  dataroomFiles = data.files;
+  renderDataroom();
+}
+
+function renderDataroom() {
   const holder = $("#dataroom-list");
-  if (!data.files.length) {
-    holder.innerHTML = `<div class="placeholder">Dataroom boş. Ekli mailler geldikçe dosyalar burada birikecek.</div>`;
+  const q = dataroomSearch.toLowerCase();
+  const files = q
+    ? dataroomFiles.filter((f) => [f.filename, f.folder, f.note].join(" ").toLowerCase().includes(q))
+    : dataroomFiles;
+  if (!files.length) {
+    holder.innerHTML = `<div class="placeholder" style="margin-top:40px">
+      ${dataroomFiles.length ? "Aramayla eşleşen dosya yok." : "Dataroom boş. Ekli mailler geldikçe dosyalar birikecek — ya da kendi belgelerinizi yükleyin."}
+    </div>`;
     return;
   }
   holder.innerHTML = `
     <table class="dataroom">
-      <thead><tr><th>Dosya</th><th>Klasör</th><th>Boyut</th><th></th></tr></thead>
+      <thead><tr><th>Dosya</th><th>Klasör</th><th>Boyut</th><th style="text-align:right">İşlemler</th></tr></thead>
       <tbody>
-        ${data.files.map((f) => `
+        ${files.map((f, i) => `
           <tr>
-            <td>📎 ${esc(f.filename)}</td>
-            <td>${esc(f.folder)}</td>
+            <td>
+              📎 ${esc(f.filename)} ${f.share_token ? '<span class="shared-badge">🔗 paylaşımda</span>' : ""}
+              ${f.note ? `<div class="file-note">📝 ${esc(f.note)}</div>` : ""}
+            </td>
+            <td>${esc(f.folder === "." ? "" : f.folder)}</td>
             <td>${formatSize(f.size)}</td>
-            <td><a href="/api/dataroom/download?path=${encodeURIComponent(f.path)}">İndir</a></td>
+            <td>
+              <div class="file-actions">
+                <a class="mini-btn" href="/api/dataroom/download?path=${encodeURIComponent(f.path)}" title="İndir">⬇ İndir</a>
+                <button class="mini-btn" data-act="send" data-i="${i}" title="Mail olarak gönder">✉ Gönder</button>
+                <button class="mini-btn" data-act="note" data-i="${i}" title="Not ekle">📝 Not</button>
+                <button class="mini-btn" data-act="share" data-i="${i}" title="Paylaşım linki">🔗 Paylaş</button>
+                <button class="mini-btn danger" data-act="delete" data-i="${i}" title="Sil">🗑</button>
+              </div>
+            </td>
           </tr>`).join("")}
       </tbody>
     </table>`;
+  holder.querySelectorAll("[data-act]").forEach((btn) => {
+    const file = files[parseInt(btn.dataset.i)];
+    btn.onclick = () => {
+      if (btn.dataset.act === "send") openSendModal(file);
+      if (btn.dataset.act === "note") openNoteModal(file);
+      if (btn.dataset.act === "share") openShareModal(file);
+      if (btn.dataset.act === "delete") deleteDataroomFile(file);
+    };
+  });
+}
+
+$("#dataroom-search").oninput = (e) => { dataroomSearch = e.target.value; renderDataroom(); };
+
+// Yükleme
+$("#upload-btn").onclick = () => $("#upload-input").click();
+$("#upload-input").onchange = async () => {
+  const input = $("#upload-input");
+  if (!input.files.length) return;
+  const fd = new FormData();
+  for (const f of input.files) fd.append("files", f);
+  const btn = $("#upload-btn");
+  btn.disabled = true;
+  btn.textContent = "⬆ Yükleniyor...";
+  try {
+    const res = await fetch("/api/dataroom/upload", { method: "POST", body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `Hata: ${res.status}`);
+    toast(`${data.files.length} dosya yüklendi ✓`);
+    loadDataroom();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "⬆ Dosya Yükle";
+    input.value = "";
+  }
+};
+
+async function deleteDataroomFile(file) {
+  if (!confirm(`"${file.filename}" kalıcı olarak silinsin mi?`)) return;
+  try {
+    await api(`/api/dataroom/file?path=${encodeURIComponent(file.path)}`, { method: "DELETE" });
+    toast("Dosya silindi");
+    loadDataroom();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function openNoteModal(file) {
+  openModal(`
+    <h3>📝 Not — ${esc(file.filename)}</h3>
+    <div class="modal-sub">${esc(file.folder === "." ? "" : file.folder)}</div>
+    <textarea id="note-text" placeholder="Bu belge hakkında notunuz...">${esc(file.note || "")}</textarea>
+    <div class="modal-actions">
+      <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
+      <button class="pill accent" id="note-save">Kaydet</button>
+    </div>`);
+  $("#note-save").onclick = async () => {
+    try {
+      await api("/api/dataroom/note", {
+        method: "POST",
+        body: JSON.stringify({ path: file.path, note: $("#note-text").value }),
+      });
+      toast("Not kaydedildi ✓");
+      closeModal();
+      loadDataroom();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  };
+}
+
+async function openShareModal(file) {
+  try {
+    const data = await api("/api/dataroom/share", {
+      method: "POST",
+      body: JSON.stringify({ path: file.path }),
+    });
+    const url = window.location.origin + data.url;
+    openModal(`
+      <h3>🔗 Paylaşım Linki</h3>
+      <div class="modal-sub">${esc(file.filename)} — bu linki bilen herkes dosyayı indirebilir.</div>
+      <div class="share-url"><code id="share-url-text">${esc(url)}</code></div>
+      <div class="modal-actions">
+        <button class="pill danger-ghost" id="share-revoke">Linki İptal Et</button>
+        <button class="pill ghost" onclick="closeModal()">Kapat</button>
+        <button class="pill accent" id="share-copy">📋 Kopyala</button>
+      </div>`);
+    $("#share-copy").onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+        toast("Link kopyalandı ✓");
+      } catch {
+        toast("Kopyalanamadı — linki elle seçin", true);
+      }
+    };
+    $("#share-revoke").onclick = async () => {
+      await api(`/api/dataroom/share?path=${encodeURIComponent(file.path)}`, { method: "DELETE" });
+      toast("Paylaşım linki iptal edildi");
+      closeModal();
+      loadDataroom();
+    };
+    loadDataroom();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function openSendModal(file) {
+  if (!state.accounts.length) {
+    return toast("Önce Hesaplar sekmesinden bir mail hesabı ekleyin", true);
+  }
+  const accountOptions = state.accounts
+    .map((a) => `<option value="${a.id}">${esc(a.display_name || a.email)}</option>`)
+    .join("");
+  openModal(`
+    <h3>✉ Belgeyi Mail At</h3>
+    <div class="modal-sub">Ek: ${esc(file.filename)} (${formatSize(file.size)})</div>
+    <div class="form-col">
+      <select id="send-account">${accountOptions}</select>
+      <input id="send-to" type="email" placeholder="Alıcı adresi (ör. ad@firma.com)">
+      <input id="send-subject" placeholder="Konu" value="Belge: ${esc(file.filename)}">
+      <textarea id="send-message" placeholder="Mesaj (isteğe bağlı)"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
+      <button class="pill accent" id="send-file-btn">➤ Gönder</button>
+    </div>`);
+  $("#send-file-btn").onclick = async () => {
+    const to = $("#send-to").value.trim();
+    if (!to) return toast("Alıcı adresi gerekli", true);
+    const btn = $("#send-file-btn");
+    btn.disabled = true;
+    btn.textContent = "Gönderiliyor...";
+    try {
+      await api("/api/dataroom/send", {
+        method: "POST",
+        body: JSON.stringify({
+          path: file.path,
+          to,
+          subject: $("#send-subject").value,
+          message: $("#send-message").value,
+          account_id: parseInt($("#send-account").value),
+        }),
+      });
+      toast(`"${file.filename}" ${to} adresine gönderildi ✓`);
+      closeModal();
+    } catch (err) {
+      toast(err.message, true);
+      btn.disabled = false;
+      btn.textContent = "➤ Gönder";
+    }
+  };
 }
 
 // ---- Hesaplar ----
