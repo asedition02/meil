@@ -6,6 +6,7 @@ Microsoft Teams görünümlü arayüzüyle **birden fazla mail hesabına** (Gmai
 2. **Okur ve özetler** — Her mail için 1-3 cümlelik Türkçe özet çıkarır.
 3. **Yanıt önerir** — Yanıt gerektiren mailler için gönderilmeye hazır taslak yazar. Taslağı düzenleyebilir, "Yeniden Öner" ile talimat verebilir ve **sizin onayınızla** gönderirsiniz. Onaysız hiçbir mail gönderilmez.
 4. **Ekleri dataroom'a kaydeder** — Tüm ekler `data/dataroom/GÖNDEREN/TARİH/` yapısında saklanır ve arayüzden indirilebilir.
+5. **Takvim** — Apple iCloud (CalDAV) ve Google Takvim (gizli iCal adresi) entegrasyonlu ay görünümü. Claude, maillerdeki toplantı/randevu/son tarihleri otomatik tespit eder; tek tıkla yerel takvime veya iCloud takviminize eklersiniz.
 
 ## Kurulum
 
@@ -35,6 +36,18 @@ Tarayıcıda **http://localhost:8000** adresini açın:
 | `USER_NAME` | Yanıt taslaklarında imza olarak kullanılacak adınız |
 | `SYNC_LIMIT` | Her eşitlemede hesap başına işlenecek en fazla mail sayısı (varsayılan 25) |
 | `EMAIL_ADDRESS` vb. | İsteğe bağlı — ilk hesabı arayüz yerine buradan tanımlamak isterseniz |
+
+## Takvim entegrasyonu
+
+Takvim sekmesindeki **"Takvim Kaynakları"** bölümünden bağlanır:
+
+| Kaynak | Nasıl | Yetki |
+|---|---|---|
+| **Apple iCloud** | Apple ID + **uygulama şifresi** ([appleid.apple.com](https://account.apple.com/account/manage) → Oturum Açma ve Güvenlik → Uygulama Şifreleri). Hesaptaki tüm takvimler bağlanır. | Okuma + **etkinlik ekleme** |
+| **Google Takvim** | Google Takvim → Ayarlar → takviminiz → "Takvimi entegre et" → **iCal biçiminde gizli adres**i kopyalayın | Salt okunur |
+| **Diğer ICS/webcal** | Outlook yayınlama bağlantısı, şirket takvimi vb. herhangi bir ICS adresi | Salt okunur |
+
+Mailde tespit edilen etkinlikler mail detayındaki **"📅 Takvime Ekle"** kartıyla yerel "Meil" takvimine veya iCloud takvimlerinizden birine yazılır. "⟳ Takvimleri Eşitle" butonu harici kaynaklardan etkinlikleri yeniler (geçmiş 30 gün – gelecek 1 yıl).
 
 ### Hesap türlerine göre notlar
 

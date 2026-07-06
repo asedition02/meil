@@ -36,8 +36,37 @@ CREATE TABLE IF NOT EXISTS emails (
     suggested_reply TEXT,
     status TEXT DEFAULT 'new',          -- new | replied | archived
     attachments TEXT DEFAULT '[]',      -- JSON: [{filename, path, size}]
+    event_json TEXT,                    -- AI'nın tespit ettiği etkinlik (JSON)
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS calendars (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    type TEXT,                          -- icloud | ics | local
+    url TEXT,
+    username TEXT,
+    password TEXT,
+    color TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    calendar_id INTEGER,                -- NULL = yerel Meil takvimi
+    uid TEXT,
+    title TEXT,
+    start TEXT,                         -- ISO tarih-saat
+    end TEXT,
+    all_day INTEGER DEFAULT 0,
+    location TEXT,
+    notes TEXT,
+    source TEXT DEFAULT 'manual',       -- sync | manual | email
+    source_email_id INTEGER,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_events_start ON events(start);
+CREATE INDEX IF NOT EXISTS idx_events_calendar ON events(calendar_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_msgid_account
     ON emails(message_id, account_id);
 CREATE INDEX IF NOT EXISTS idx_emails_category ON emails(category);
@@ -57,9 +86,10 @@ def get_db():
 
 
 def _migrate(db: sqlite3.Connection):
-    """Eski tek hesaplı şemadan çoklu hesaba geçiş."""
+    """Eski şemalardan geçiş."""
     cols = {r["name"] for r in db.execute("PRAGMA table_info(emails)").fetchall()}
     if cols and "account_id" not in cols:
+        # tek hesaplı ilk şema → çoklu hesap
         db.execute("ALTER TABLE emails RENAME TO emails_old")
         db.executescript(SCHEMA)
         db.execute(
@@ -72,6 +102,9 @@ def _migrate(db: sqlite3.Connection):
                FROM emails_old"""
         )
         db.execute("DROP TABLE emails_old")
+    elif cols and "event_json" not in cols:
+        # takvim öncesi şema → event_json sütunu ekle
+        db.execute("ALTER TABLE emails ADD COLUMN event_json TEXT")
 
 
 def init_db():
@@ -130,6 +163,130 @@ def delete_account(account_id: int):
         db.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
 
 
+# ---- Takvimler ----
+
+CALENDAR_COLORS = ["#0f8a6d", "#2563eb", "#d64550", "#b06d0a", "#7c3aed", "#0e7490", "#be5a0e"]
+
+
+def create_calendar(data: dict) -> int:
+    with get_db() as db:
+        n = db.execute("SELECT COUNT(*) AS n FROM calendars").fetchone()["n"]
+        cur = db.execute(
+            """INSERT INTO calendars (name, type, url, username, password, color)
+               VALUES (?,?,?,?,?,?)""",
+            (
+                data["name"],
+                data["type"],
+                data.get("url", ""),
+                data.get("username", ""),
+                data.get("password", ""),
+                data.get("color") or CALENDAR_COLORS[n % len(CALENDAR_COLORS)],
+            ),
+        )
+        return cur.lastrowid
+
+
+def list_calendars(include_password: bool = False) -> list[dict]:
+    with get_db() as db:
+        rows = db.execute("SELECT * FROM calendars ORDER BY id").fetchall()
+        cals = [dict(r) for r in rows]
+        if not include_password:
+            for c in cals:
+                c.pop("password", None)
+                c.pop("username", None)
+                c.pop("url", None)
+        return cals
+
+
+def get_calendar(calendar_id: int) -> dict | None:
+    with get_db() as db:
+        row = db.execute("SELECT * FROM calendars WHERE id = ?", (calendar_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def delete_calendar(calendar_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM events WHERE calendar_id = ?", (calendar_id,))
+        db.execute("DELETE FROM calendars WHERE id = ?", (calendar_id,))
+
+
+# ---- Etkinlikler ----
+
+def replace_synced_events(calendar_id: int, events: list[dict]):
+    """Bir takvimin harici (sync) etkinliklerini yenileriyle değiştirir."""
+    with get_db() as db:
+        db.execute(
+            "DELETE FROM events WHERE calendar_id = ? AND source = 'sync'", (calendar_id,)
+        )
+        for ev in events:
+            db.execute(
+                """INSERT INTO events (calendar_id, uid, title, start, end, all_day,
+                                       location, notes, source)
+                   VALUES (?,?,?,?,?,?,?,?,'sync')""",
+                (
+                    calendar_id,
+                    ev.get("uid"),
+                    ev.get("title"),
+                    ev.get("start"),
+                    ev.get("end"),
+                    1 if ev.get("all_day") else 0,
+                    ev.get("location"),
+                    ev.get("notes"),
+                ),
+            )
+
+
+def insert_event(data: dict) -> int:
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO events (calendar_id, uid, title, start, end, all_day,
+                                   location, notes, source, source_email_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                data.get("calendar_id"),
+                data.get("uid"),
+                data.get("title"),
+                data.get("start"),
+                data.get("end"),
+                1 if data.get("all_day") else 0,
+                data.get("location"),
+                data.get("notes"),
+                data.get("source", "manual"),
+                data.get("source_email_id"),
+            ),
+        )
+        return cur.lastrowid
+
+
+def list_events(start: str, end: str) -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT e.*, c.name AS calendar_name, c.color AS calendar_color,
+                      c.type AS calendar_type
+               FROM events e LEFT JOIN calendars c ON c.id = e.calendar_id
+               WHERE e.start < ? AND (e.end >= ? OR e.start >= ?)
+               ORDER BY e.start""",
+            (end, start, start),
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["all_day"] = bool(d["all_day"])
+            out.append(d)
+        return out
+
+
+def delete_event(event_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM events WHERE id = ?", (event_id,))
+
+
+def get_event(event_id: int) -> dict | None:
+    with get_db() as db:
+        row = db.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+        return dict(row) if row else None
+
+
 # ---- Mailler ----
 
 def email_exists(message_id: str, account_id: int | None) -> bool:
@@ -147,8 +304,8 @@ def insert_email(data: dict) -> int:
             """INSERT INTO emails
                (account_id, message_id, imap_uid, sender_name, sender_email,
                 subject, date, body_text, category, priority, summary,
-                needs_reply, suggested_reply, attachments)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                needs_reply, suggested_reply, attachments, event_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 data.get("account_id"),
                 data["message_id"],
@@ -164,6 +321,7 @@ def insert_email(data: dict) -> int:
                 1 if data.get("needs_reply") else 0,
                 data.get("suggested_reply"),
                 json.dumps(data.get("attachments", []), ensure_ascii=False),
+                data.get("event_json"),
             ),
         )
         return cur.lastrowid
@@ -230,4 +388,9 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     d = dict(row)
     d["attachments"] = json.loads(d.get("attachments") or "[]")
     d["needs_reply"] = bool(d.get("needs_reply"))
+    try:
+        d["event"] = json.loads(d["event_json"]) if d.get("event_json") else None
+    except Exception:
+        d["event"] = None
+    d.pop("event_json", None)
     return d

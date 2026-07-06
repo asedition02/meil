@@ -3,10 +3,17 @@ let state = {
   counts: {},
   categories: [],
   accounts: [],
+  calendars: [],
   selectedId: null,
   activeCategory: "",
   activeAccount: "",
   search: "",
+  cal: {
+    year: new Date().getFullYear(),
+    month: new Date().getMonth(),      // 0-11
+    selected: null,                    // "YYYY-MM-DD"
+    events: [],
+  },
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -111,9 +118,10 @@ document.querySelectorAll(".rail-btn").forEach((btn) => {
     document.querySelectorAll(".rail-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     const view = btn.dataset.view;
-    ["inbox", "dataroom", "accounts"].forEach((v) => {
+    ["inbox", "calendar", "dataroom", "accounts"].forEach((v) => {
       $(`#view-${v}`).style.display = v === view ? "flex" : "none";
     });
+    if (view === "calendar") loadCalendar();
     if (view === "dataroom") loadDataroom();
     if (view === "accounts") loadAccounts();
   };
@@ -225,6 +233,22 @@ function renderDetail(e) {
     ? `<span class="badge acct">${esc(e.account_name || e.account_email)}</span>`
     : "";
 
+  const writableCals = state.calendars.filter((c) => c.type === "icloud");
+  const eventCard = e.event && e.event.exists && e.event.date
+    ? `<div class="card event-card">
+        <h3>📅 Tespit Edilen Etkinlik</h3>
+        <div class="ev-line"><strong>${esc(e.event.title || e.subject)}</strong></div>
+        <div class="ev-line">${esc(e.event.date)}${e.event.time ? " · " + esc(e.event.time) : " · tüm gün"}${e.event.location ? " · 📍 " + esc(e.event.location) : ""}</div>
+        <div class="ev-actions">
+          <select id="event-cal-select">
+            <option value="">Meil (yerel takvim)</option>
+            ${writableCals.map((c) => `<option value="${c.id}">${esc(c.name)} (iCloud)</option>`).join("")}
+          </select>
+          <button class="pill accent" id="add-event-btn">＋ Takvime Ekle</button>
+        </div>
+      </div>`
+    : "";
+
   $("#detail-panel").innerHTML = `
     <div class="detail-header">
       ${avatarHtml(e.sender_name, e.sender_email, "large")}
@@ -240,6 +264,7 @@ function renderDetail(e) {
       </div>
     </div>
     <div class="card summary-card"><h3>✨ Özet</h3><p>${esc(e.summary || "")}</p></div>
+    ${eventCard}
     ${attachments}
     <div class="card">
       <h3>Yanıt Taslağı ${e.status === "replied" ? "— ✓ gönderildi" : "· onayınızla gönderilir"}</h3>
@@ -295,6 +320,24 @@ function renderDetail(e) {
     toast("Arşivlendi");
     loadEmails();
   };
+
+  const addEventBtn = $("#add-event-btn");
+  if (addEventBtn) {
+    addEventBtn.onclick = async () => {
+      addEventBtn.disabled = true;
+      try {
+        const calId = $("#event-cal-select").value;
+        const data = await api(`/api/emails/${e.id}/add-to-calendar`, {
+          method: "POST",
+          body: JSON.stringify({ calendar_id: calId ? parseInt(calId) : null }),
+        });
+        toast(`Etkinlik "${data.calendar}" takvimine eklendi ✓`);
+      } catch (err) {
+        toast(err.message, true);
+        addEventBtn.disabled = false;
+      }
+    };
+  }
 }
 
 // ---- Eşitleme ----
@@ -426,12 +469,262 @@ $("#acc-save").onclick = async () => {
   }
 };
 
+// ---- Takvim ----
+
+const MONTHS_TR = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+  "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+const DAYS_TR = ["Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"];
+
+const ymd = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+function calColor(ev) {
+  return ev.calendar_color || "#0f8a6d";
+}
+
+async function loadCalendar() {
+  const { year, month } = state.cal;
+  if (!state.cal.selected) state.cal.selected = ymd(new Date());
+  // Izgara aralığı: ayın ilk gününün pazartesisi → +42 gün
+  const first = new Date(year, month, 1);
+  const gridStart = new Date(first);
+  gridStart.setDate(first.getDate() - ((first.getDay() + 6) % 7));
+  const gridEnd = new Date(gridStart);
+  gridEnd.setDate(gridStart.getDate() + 42);
+  const data = await api(`/api/events?start=${ymd(gridStart)}&end=${ymd(gridEnd)}T23:59`);
+  state.cal.events = data.events;
+  state.calendars = data.calendars;
+  renderCalendarGrid(gridStart);
+  renderDayAgenda();
+  renderCalendarSources();
+  renderEventCalendarSelect();
+}
+
+function eventsOnDay(dayStr) {
+  return state.cal.events.filter((ev) => (ev.start || "").slice(0, 10) === dayStr);
+}
+
+function renderCalendarGrid(gridStart) {
+  const { year, month } = state.cal;
+  $("#cal-title").textContent = `${MONTHS_TR[month]} ${year}`;
+  const todayStr = ymd(new Date());
+  let html = "";
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(gridStart);
+    d.setDate(gridStart.getDate() + i);
+    const dStr = ymd(d);
+    const other = d.getMonth() !== month ? " other" : "";
+    const today = dStr === todayStr ? " today" : "";
+    const selected = dStr === state.cal.selected ? " selected" : "";
+    const evs = eventsOnDay(dStr);
+    const chips = evs.slice(0, 3)
+      .map((ev) => `<div class="cal-event-chip" style="background:${calColor(ev)}">${ev.all_day ? "" : (ev.start || "").slice(11, 16) + " "}${esc(ev.title)}</div>`)
+      .join("");
+    const more = evs.length > 3 ? `<span class="cal-more">+${evs.length - 3} daha</span>` : "";
+    html += `<div class="cal-cell${other}${today}${selected}" data-day="${dStr}">
+      <span class="daynum">${d.getDate()}</span>${chips}${more}
+    </div>`;
+  }
+  $("#cal-grid").innerHTML = html;
+  document.querySelectorAll(".cal-cell").forEach((cell) => {
+    cell.onclick = () => {
+      state.cal.selected = cell.dataset.day;
+      renderCalendarGrid(gridStart);
+      renderDayAgenda();
+    };
+  });
+}
+
+function renderDayAgenda() {
+  const dayStr = state.cal.selected;
+  const d = new Date(dayStr + "T00:00");
+  $("#cal-day-title").textContent =
+    `${d.getDate()} ${MONTHS_TR[d.getMonth()]} ${DAYS_TR[d.getDay()]}`;
+  const evs = eventsOnDay(dayStr).sort((a, b) => (a.start || "").localeCompare(b.start || ""));
+  const holder = $("#cal-day-events");
+  if (!evs.length) {
+    holder.innerHTML = `<p class="hint">Bu günde etkinlik yok.</p>`;
+    return;
+  }
+  holder.innerHTML = evs
+    .map((ev) => {
+      const time = ev.all_day
+        ? "Tüm gün"
+        : `${(ev.start || "").slice(11, 16)}${ev.end ? "–" + (ev.end || "").slice(11, 16) : ""}`;
+      const calName = ev.calendar_name || "Meil";
+      const deletable = ev.source !== "sync";
+      return `<div class="day-event">
+        <span class="bar" style="background:${calColor(ev)}"></span>
+        <div class="ev-body">
+          <div class="ev-title">${esc(ev.title)}</div>
+          <div class="ev-meta">${time} · ${esc(calName)}${ev.location ? " · 📍 " + esc(ev.location) : ""}</div>
+        </div>
+        ${deletable ? `<button class="ev-del" data-ev="${ev.id}" title="Sil">✕</button>` : ""}
+      </div>`;
+    })
+    .join("");
+  holder.querySelectorAll(".ev-del").forEach((btn) => {
+    btn.onclick = async () => {
+      if (!confirm("Etkinlik silinsin mi?")) return;
+      await api(`/api/events/${btn.dataset.ev}`, { method: "DELETE" });
+      toast("Etkinlik silindi");
+      loadCalendar();
+    };
+  });
+}
+
+function renderCalendarSources() {
+  const holder = $("#calendar-sources");
+  if (!state.calendars.length) {
+    holder.innerHTML = `<p class="hint">Henüz takvim bağlanmadı. Mailden eklenen etkinlikler yerel "Meil" takviminde tutulur.</p>`;
+    return;
+  }
+  const typeLabel = { icloud: "iCloud", ics: "ICS", local: "yerel" };
+  holder.innerHTML = state.calendars
+    .map((c) => `<div class="cal-source-row">
+      <span class="dot" style="background:${c.color || "#0f8a6d"}"></span>
+      <span class="src-name">${esc(c.name)}</span>
+      <span class="src-type">${typeLabel[c.type] || c.type}</span>
+      <button class="ev-del" data-cal="${c.id}" title="Kaldır">✕</button>
+    </div>`)
+    .join("");
+  holder.querySelectorAll("[data-cal]").forEach((btn) => {
+    btn.onclick = async () => {
+      if (!confirm("Bu takvim ve etkinlikleri kaldırılsın mı?")) return;
+      await api(`/api/calendars/${btn.dataset.cal}`, { method: "DELETE" });
+      toast("Takvim kaldırıldı");
+      loadCalendar();
+    };
+  });
+}
+
+function renderEventCalendarSelect() {
+  const sel = $("#ev-calendar");
+  const writable = state.calendars.filter((c) => c.type === "icloud");
+  sel.innerHTML =
+    `<option value="">Meil (yerel)</option>` +
+    writable.map((c) => `<option value="${c.id}">${esc(c.name)} (iCloud)</option>`).join("");
+}
+
+$("#cal-prev").onclick = () => {
+  state.cal.month--;
+  if (state.cal.month < 0) { state.cal.month = 11; state.cal.year--; }
+  loadCalendar();
+};
+$("#cal-next").onclick = () => {
+  state.cal.month++;
+  if (state.cal.month > 11) { state.cal.month = 0; state.cal.year++; }
+  loadCalendar();
+};
+$("#cal-today").onclick = () => {
+  const now = new Date();
+  state.cal.year = now.getFullYear();
+  state.cal.month = now.getMonth();
+  state.cal.selected = ymd(now);
+  loadCalendar();
+};
+
+$("#cal-sync").onclick = async () => {
+  const btn = $("#cal-sync");
+  btn.disabled = true;
+  btn.textContent = "⟳ Eşitleniyor...";
+  try {
+    const data = await api("/api/calendars/sync", { method: "POST" });
+    const failed = data.results.filter((r) => r.error);
+    let msg = `${data.total_events} etkinlik eşitlendi`;
+    if (failed.length) msg += ` — hata: ${failed.map((r) => r.calendar).join(", ")}`;
+    toast(msg, failed.length > 0 && data.total_events === 0);
+    failed.forEach((r) => console.warn(r.calendar, r.error));
+    loadCalendar();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "⟳ Takvimleri Eşitle";
+  }
+};
+
+// Yeni etkinlik formu
+$("#cal-new-event").onclick = () => {
+  const card = $("#new-event-card");
+  card.style.display = card.style.display === "none" ? "block" : "none";
+  $("#ev-date").value = state.cal.selected || ymd(new Date());
+};
+$("#ev-cancel").onclick = () => ($("#new-event-card").style.display = "none");
+$("#ev-save").onclick = async () => {
+  const payload = {
+    title: $("#ev-title").value.trim(),
+    date: $("#ev-date").value,
+    time: $("#ev-time").value,
+    duration_minutes: parseInt($("#ev-duration").value) || 60,
+    location: $("#ev-location").value.trim(),
+    calendar_id: $("#ev-calendar").value ? parseInt($("#ev-calendar").value) : null,
+  };
+  if (!payload.title) return toast("Başlık gerekli", true);
+  if (!payload.date) return toast("Tarih gerekli", true);
+  try {
+    const data = await api("/api/events", { method: "POST", body: JSON.stringify(payload) });
+    toast(`Etkinlik "${data.calendar}" takvimine eklendi ✓`);
+    $("#ev-title").value = ""; $("#ev-location").value = "";
+    $("#new-event-card").style.display = "none";
+    state.cal.selected = payload.date;
+    loadCalendar();
+  } catch (err) {
+    toast(err.message, true);
+  }
+};
+
+// Takvim kaynağı ekleme
+const CAL_SRC_HINTS = {
+  icloud: 'Apple Kimliğinizle giriş yapın; normal şifreniz çalışmaz — <a href="https://account.apple.com/account/manage" target="_blank">appleid.apple.com</a> → Oturum Açma ve Güvenlik → Uygulama Şifreleri bölümünden oluşturun. Hesabınızdaki tüm takvimler bağlanır ve etkinlik EKLENEBİLİR.',
+  ics: 'Google Takvim → Ayarlar → takviminizi seçin → "Takvimi entegre et" → <strong>iCal biçiminde gizli adres</strong>i kopyalayıp yapıştırın. Salt okunurdur (görüntüleme).',
+  "ics-generic": "Herhangi bir ICS/webcal adresi bağlayabilirsiniz (Outlook yayınlama bağlantısı, şirket takvimi vb.). Salt okunurdur.",
+};
+
+$("#cal-src-type").onchange = () => {
+  const t = $("#cal-src-type").value;
+  $("#cal-src-icloud").style.display = t === "icloud" ? "flex" : "none";
+  $("#cal-src-ics").style.display = t === "icloud" ? "none" : "flex";
+  $("#cal-src-hint").innerHTML = CAL_SRC_HINTS[t] || "";
+};
+$("#cal-src-type").onchange();
+
+$("#cal-src-add").onclick = async () => {
+  const btn = $("#cal-src-add");
+  const t = $("#cal-src-type").value;
+  const payload = t === "icloud"
+    ? { type: "icloud", username: $("#cal-apple-id").value.trim(), password: $("#cal-apple-pass").value }
+    : { type: "ics", name: $("#cal-ics-name").value.trim(), url: $("#cal-ics-url").value.trim() };
+  if (t === "icloud" && (!payload.username || !payload.password))
+    return toast("Apple ID ve uygulama şifresi gerekli", true);
+  if (t !== "icloud" && !payload.url) return toast("ICS adresi gerekli", true);
+  btn.disabled = true;
+  btn.textContent = "Bağlanıyor...";
+  try {
+    const data = await api("/api/calendars", { method: "POST", body: JSON.stringify(payload) });
+    toast(`Bağlandı: ${data.added.join(", ")} ✓ — etkinlikler eşitleniyor...`);
+    ["cal-apple-id", "cal-apple-pass", "cal-ics-name", "cal-ics-url"].forEach(
+      (id) => ($("#" + id).value = "")
+    );
+    try { await api("/api/calendars/sync", { method: "POST" }); } catch { /* ilk eşitleme başarısızsa manuel denenir */ }
+    loadCalendar();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Takvimi Bağla";
+  }
+};
+
 // ---- Başlangıç ----
 
 (async function init() {
   try {
-    const [status, accounts] = await Promise.all([api("/api/status"), api("/api/accounts")]);
+    const [status, accounts, cals] = await Promise.all([
+      api("/api/status"), api("/api/accounts"), api("/api/calendars"),
+    ]);
     state.accounts = accounts.accounts;
+    state.calendars = cals.calendars;
     if (!status.ai_configured) {
       toast("ANTHROPIC_API_KEY ayarlanmadı — .env dosyasını düzenleyin", true);
     } else if (!status.accounts) {

@@ -1,4 +1,6 @@
 """Meil — mail tasnif ve yanıt asistanı (FastAPI)."""
+import datetime as dt
+import json
 import logging
 
 from fastapi import FastAPI, HTTPException
@@ -6,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai, config, database, dataroom, email_client
+from . import ai, calendar_client, config, database, dataroom, email_client
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("meil")
@@ -45,6 +47,32 @@ class ReplyRequest(BaseModel):
 
 class RegenerateRequest(BaseModel):
     instruction: str = ""
+
+
+class CalendarRequest(BaseModel):
+    type: str                 # icloud | ics
+    name: str = ""
+    username: str = ""        # icloud: Apple ID
+    password: str = ""        # icloud: uygulama şifresi
+    url: str = ""             # ics: besleme adresi
+
+
+class EventRequest(BaseModel):
+    title: str
+    date: str                 # YYYY-MM-DD
+    time: str = ""            # HH:MM; boşsa tüm gün
+    duration_minutes: int = 60
+    location: str = ""
+    notes: str = ""
+    calendar_id: int | None = None   # None = yerel takvim
+
+
+class AddToCalendarRequest(BaseModel):
+    calendar_id: int | None = None
+    title: str = ""
+    date: str = ""
+    time: str = ""
+    duration_minutes: int = 0
 
 
 class AccountRequest(BaseModel):
@@ -125,6 +153,9 @@ def _sync_account(account: dict) -> dict:
                 user_name=config.USER_NAME,
             )
             msg.update(triage)
+            event = msg.pop("detected_event", None)
+            if event and event.get("exists") and event.get("date"):
+                msg["event_json"] = json.dumps(event, ensure_ascii=False)
         except Exception as e:
             log.exception("Tasnif hatası: %s", msg["subject"])
             errors.append(f"{msg['subject']}: {e}")
@@ -250,6 +281,187 @@ def archive_email(email_id: int):
         raise HTTPException(status_code=404, detail="Mail bulunamadı")
     database.update_email(email_id, status="archived")
     return {"ok": True}
+
+
+# ---- Takvimler ----
+
+SYNC_PAST_DAYS = 30
+SYNC_FUTURE_DAYS = 365
+
+
+@app.get("/api/calendars")
+def get_calendars():
+    return {"calendars": database.list_calendars()}
+
+
+@app.post("/api/calendars")
+def add_calendar(req: CalendarRequest):
+    """Takvim kaynağı ekler. icloud: hesaptaki TÜM takvimleri keşfedip ekler."""
+    if req.type == "icloud":
+        if not req.username or not req.password:
+            raise HTTPException(status_code=400, detail="Apple ID ve uygulama şifresi gerekli")
+        try:
+            discovered = calendar_client.discover_icloud(req.username.strip(), req.password)
+        except calendar_client.CalendarError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        added = []
+        for cal in discovered:
+            database.create_calendar(
+                {
+                    "name": cal["name"],
+                    "type": "icloud",
+                    "url": cal["url"],
+                    "username": req.username.strip(),
+                    "password": req.password,
+                }
+            )
+            added.append(cal["name"])
+        return {"ok": True, "added": added}
+
+    if req.type == "ics":
+        if not req.url.strip():
+            raise HTTPException(status_code=400, detail="ICS adresi gerekli")
+        try:
+            calendar_client.test_ics(req.url)
+        except calendar_client.CalendarError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        name = req.name.strip() or "ICS Takvimi"
+        database.create_calendar({"name": name, "type": "ics", "url": req.url.strip()})
+        return {"ok": True, "added": [name]}
+
+    raise HTTPException(status_code=400, detail="Bilinmeyen takvim türü")
+
+
+@app.delete("/api/calendars/{calendar_id}")
+def remove_calendar(calendar_id: int):
+    if not database.get_calendar(calendar_id):
+        raise HTTPException(status_code=404, detail="Takvim bulunamadı")
+    database.delete_calendar(calendar_id)
+    return {"ok": True}
+
+
+@app.post("/api/calendars/sync")
+def sync_calendars():
+    """Tüm harici takvimlerin etkinliklerini yeniden çeker."""
+    calendars = [c for c in database.list_calendars(include_password=True) if c["type"] != "local"]
+    if not calendars:
+        raise HTTPException(status_code=400, detail="Kayıtlı harici takvim yok.")
+    start = dt.datetime.now() - dt.timedelta(days=SYNC_PAST_DAYS)
+    end = dt.datetime.now() + dt.timedelta(days=SYNC_FUTURE_DAYS)
+    results, total = [], 0
+    for cal in calendars:
+        try:
+            events = calendar_client.fetch_events(cal, start, end)
+            database.replace_synced_events(cal["id"], events)
+            total += len(events)
+            results.append({"calendar": cal["name"], "events": len(events), "error": None})
+        except calendar_client.CalendarError as e:
+            results.append({"calendar": cal["name"], "events": 0, "error": str(e)})
+    return {"total_events": total, "results": results}
+
+
+def _build_times(date_str: str, time_str: str, duration_minutes: int) -> tuple[dt.datetime, dt.datetime, bool]:
+    try:
+        day = dt.date.fromisoformat(date_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Geçersiz tarih (YYYY-AA-GG bekleniyor)")
+    if time_str:
+        try:
+            t = dt.time.fromisoformat(time_str)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Geçersiz saat (SS:DD bekleniyor)")
+        start = dt.datetime.combine(day, t)
+        end = start + dt.timedelta(minutes=duration_minutes or 60)
+        return start, end, False
+    start = dt.datetime.combine(day, dt.time.min)
+    return start, start + dt.timedelta(days=1), True
+
+
+def _create_event(title: str, start: dt.datetime, end: dt.datetime, all_day: bool,
+                  location: str, notes: str, calendar_id: int | None,
+                  source: str, source_email_id: int | None = None) -> dict:
+    """Etkinliği yerel takvime veya seçilen iCloud takvimine yazar."""
+    target_name = "Meil (yerel)"
+    uid = None
+    if calendar_id:
+        cal = database.get_calendar(calendar_id)
+        if not cal:
+            raise HTTPException(status_code=404, detail="Takvim bulunamadı")
+        target_name = cal["name"]
+        if cal["type"] == "icloud":
+            try:
+                uid = calendar_client.create_caldav_event(
+                    cal, title, start, end, location or None, notes or None
+                )
+            except calendar_client.CalendarError as e:
+                raise HTTPException(status_code=502, detail=str(e))
+        elif cal["type"] == "ics":
+            raise HTTPException(
+                status_code=400,
+                detail="ICS takvimleri salt okunurdur; etkinliği yerel takvime veya iCloud'a ekleyin.",
+            )
+    database.insert_event(
+        {
+            "calendar_id": calendar_id,
+            "uid": uid,
+            "title": title,
+            "start": start.isoformat(timespec="minutes"),
+            "end": end.isoformat(timespec="minutes"),
+            "all_day": all_day,
+            "location": location or None,
+            "notes": notes or None,
+            # iCloud'a yazılanlar bir sonraki eşitlemede sunucudan gelir
+            "source": "sync" if uid else source,
+            "source_email_id": source_email_id,
+        }
+    )
+    return {"ok": True, "calendar": target_name}
+
+
+@app.get("/api/events")
+def get_events(start: str, end: str):
+    return {
+        "events": database.list_events(start, end),
+        "calendars": database.list_calendars(),
+    }
+
+
+@app.post("/api/events")
+def create_event(req: EventRequest):
+    if not req.title.strip():
+        raise HTTPException(status_code=400, detail="Etkinlik başlığı gerekli")
+    start, end, all_day = _build_times(req.date, req.time, req.duration_minutes)
+    return _create_event(req.title.strip(), start, end, all_day,
+                         req.location.strip(), req.notes.strip(), req.calendar_id, "manual")
+
+
+@app.delete("/api/events/{event_id}")
+def remove_event(event_id: int):
+    ev = database.get_event(event_id)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Etkinlik bulunamadı")
+    database.delete_event(event_id)
+    return {"ok": True}
+
+
+@app.post("/api/emails/{email_id}/add-to-calendar")
+def add_email_event(email_id: int, req: AddToCalendarRequest):
+    """Mailde tespit edilen etkinliği takvime ekler."""
+    email_data = database.get_email(email_id)
+    if not email_data:
+        raise HTTPException(status_code=404, detail="Mail bulunamadı")
+    detected = email_data.get("event") or {}
+    title = (req.title or detected.get("title") or email_data["subject"] or "Etkinlik").strip()
+    date_str = req.date or detected.get("date") or ""
+    if not date_str:
+        raise HTTPException(status_code=400, detail="Etkinlik tarihi yok")
+    time_str = req.time or detected.get("time") or ""
+    duration = req.duration_minutes or detected.get("duration_minutes") or 60
+    start, end, all_day = _build_times(date_str, time_str, duration)
+    notes = f"Mailden eklendi: {email_data['sender_email']} — {email_data['subject']}"
+    return _create_event(title, start, end, all_day,
+                         (detected.get("location") or "").strip(), notes,
+                         req.calendar_id, "email", source_email_id=email_id)
 
 
 # ---- Dataroom ----

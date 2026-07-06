@@ -38,8 +38,37 @@ TRIAGE_SCHEMA = {
                 "kibar bir yanıt taslağı. Yanıt gerekmiyorsa boş string."
             ),
         },
+        "detected_event": {
+            "type": "object",
+            "description": "Mailde geçen toplantı, randevu, etkinlik veya son tarih.",
+            "properties": {
+                "exists": {
+                    "type": "boolean",
+                    "description": "Mailde takvime eklenebilecek somut bir etkinlik/toplantı/son tarih var mı?",
+                },
+                "title": {"type": "string", "description": "Etkinliğin kısa Türkçe başlığı."},
+                "date": {
+                    "type": "string",
+                    "description": "YYYY-MM-DD. 'Yarın', 'önümüzdeki salı' gibi göreli ifadeleri mailin tarihine göre hesapla. Tarih belirsizse boş string.",
+                },
+                "time": {
+                    "type": "string",
+                    "description": "HH:MM (24 saat). Saat belirtilmemişse boş string.",
+                },
+                "duration_minutes": {
+                    "type": "integer",
+                    "description": "Tahmini süre dakika cinsinden; bilinmiyorsa 60.",
+                },
+                "location": {
+                    "type": "string",
+                    "description": "Yer veya çevrimiçi bağlantı; yoksa boş string.",
+                },
+            },
+            "required": ["exists", "title", "date", "time", "duration_minutes", "location"],
+            "additionalProperties": False,
+        },
     },
-    "required": ["category", "priority", "summary", "needs_reply", "suggested_reply"],
+    "required": ["category", "priority", "summary", "needs_reply", "suggested_reply", "detected_event"],
     "additionalProperties": False,
 }
 
@@ -54,7 +83,10 @@ Kurallar:
 kibar bir kapanışla bitir. Uydurma bilgi ekleme; emin olamadığın yerlerde \
 [KÖŞELİ PARANTEZ] içinde doldurulacak alan bırak.
 - Toplu bülten, reklam ve spam maillerine yanıt önerme (needs_reply: false).
-- Fatura, ödeme, resmi kurum, son tarih içeren mailleri yüksek öncelikli değerlendir."""
+- Fatura, ödeme, resmi kurum, son tarih içeren mailleri yüksek öncelikli değerlendir.
+- Mailde somut bir toplantı, randevu, etkinlik veya son ödeme/teslim tarihi geçiyorsa \
+detected_event.exists=true yap ve alanlarını doldur. Tarihi kesin olmayan, geçmişte \
+kalan veya belirsiz ("bir ara görüşelim" gibi) ifadeler için exists=false bırak."""
 
 _client: anthropic.Anthropic | None = None
 

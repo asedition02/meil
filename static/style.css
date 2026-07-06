@@ -317,6 +317,104 @@ table.dataroom a { color: var(--accent-text); text-decoration: none; font-weight
 .hint a { color: var(--accent-text); }
 #acc-save { margin-top: 4px; }
 
+/* ---------- Takvim ---------- */
+#cal-main {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px;
+}
+.cal-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 10px; }
+.cal-nav { display: flex; align-items: center; gap: 10px; }
+.cal-nav h2 { font-size: 18px; font-weight: 750; min-width: 150px; text-align: center; letter-spacing: -0.2px; }
+.cal-actions { display: flex; gap: 8px; }
+
+.cal-weekdays {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px;
+  margin-bottom: 6px; padding: 0 2px;
+}
+.cal-weekdays span {
+  font-size: 11px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.5px; text-align: center;
+}
+
+#cal-grid {
+  flex: 1; display: grid; grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: 1fr; gap: 6px; overflow-y: auto;
+}
+.cal-cell {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 6px; min-height: 84px; cursor: pointer; overflow: hidden;
+  display: flex; flex-direction: column; gap: 3px;
+  transition: border-color 0.12s, background 0.12s;
+  background: var(--panel);
+}
+.cal-cell:hover { background: var(--panel-2); }
+.cal-cell.other { opacity: 0.4; }
+.cal-cell.selected { border-color: var(--accent); background: var(--accent-soft); }
+.cal-cell .daynum {
+  font-size: 12px; font-weight: 650; color: var(--muted);
+  width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+}
+.cal-cell.today .daynum { background: var(--accent); color: #fff; }
+.cal-event-chip {
+  font-size: 10.5px; font-weight: 600; color: #fff; border-radius: 5px;
+  padding: 1px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cal-more { font-size: 10px; color: var(--muted); font-weight: 600; }
+
+#cal-side {
+  width: 340px; flex-shrink: 0; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px;
+}
+.side-title { font-size: 15px; font-weight: 750; margin-bottom: 10px; letter-spacing: -0.2px; }
+
+.day-event {
+  display: flex; gap: 10px; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--panel-2); border: 1px solid var(--border); margin-bottom: 7px;
+  align-items: flex-start;
+}
+.day-event .bar { width: 4px; border-radius: 99px; align-self: stretch; flex-shrink: 0; }
+.day-event .ev-body { flex: 1; min-width: 0; }
+.day-event .ev-title { font-size: 13.5px; font-weight: 650; }
+.day-event .ev-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.day-event .ev-del {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 14px; padding: 0 2px;
+}
+.day-event .ev-del:hover { color: var(--red); }
+
+.cal-source-row {
+  display: flex; align-items: center; gap: 8px; padding: 7px 4px;
+  font-size: 13px; border-bottom: 1px solid var(--border);
+}
+.cal-source-row:last-child { border-bottom: none; }
+.cal-source-row .dot { width: 10px; height: 10px; border-radius: 99px; flex-shrink: 0; }
+.cal-source-row .src-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-source-row .src-type { font-size: 11px; color: var(--muted); }
+
+.form-col { display: flex; flex-direction: column; gap: 9px; }
+.form-row { display: flex; gap: 9px; }
+.form-row > * { flex: 1; }
+.form-col input, .form-col select {
+  padding: 9px 12px; font-size: 13.5px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-family: inherit;
+  background: var(--panel); color: var(--text); width: 100%;
+}
+.form-col input:focus, .form-col select:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Mail detayındaki etkinlik kartı */
+.event-card { border-left: 3px solid var(--accent); }
+.event-card .ev-line { font-size: 14px; margin-bottom: 4px; }
+.event-card .ev-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+.event-card select {
+  padding: 8px 12px; font-size: 13px; border: 1px solid var(--border);
+  border-radius: 999px; font-family: inherit; background: var(--panel); color: var(--text);
+}
+
 /* ---------- Toast ---------- */
 #toast {
   position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%) translateY(8px);

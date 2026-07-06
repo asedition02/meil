@@ -33,6 +33,10 @@
         <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m3 8 8.1 5.4a2 2 0 0 0 1.8 0L21 8"/></svg></span>
         <span class="rail-label">Posta</span>
       </button>
+      <button class="rail-btn" data-view="calendar" title="Takvim">
+        <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></span>
+        <span class="rail-label">Takvim</span>
+      </button>
       <button class="rail-btn" data-view="dataroom" title="Dataroom">
         <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>
         <span class="rail-label">Dataroom</span>
@@ -59,6 +63,75 @@
         <div class="placeholder">
           <div class="placeholder-icon">✉️</div>
           <p>Okumak için bir mail seçin</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- TAKVİM -->
+    <main id="view-calendar" class="view" style="display:none">
+      <section id="cal-main">
+        <div class="cal-toolbar">
+          <div class="cal-nav">
+            <button class="icon-btn" id="cal-prev">‹</button>
+            <h2 id="cal-title">Temmuz 2026</h2>
+            <button class="icon-btn" id="cal-next">›</button>
+            <button class="pill ghost" id="cal-today">Bugün</button>
+          </div>
+          <div class="cal-actions">
+            <button class="pill ghost" id="cal-new-event">＋ Etkinlik</button>
+            <button class="pill accent" id="cal-sync">⟳ Takvimleri Eşitle</button>
+          </div>
+        </div>
+        <div class="cal-weekdays">
+          <span>Pzt</span><span>Sal</span><span>Çar</span><span>Per</span><span>Cum</span><span>Cmt</span><span>Paz</span>
+        </div>
+        <div id="cal-grid"></div>
+      </section>
+
+      <section id="cal-side">
+        <div class="card" id="new-event-card" style="display:none">
+          <h3>Yeni Etkinlik</h3>
+          <div class="form-col">
+            <input id="ev-title" placeholder="Başlık">
+            <div class="form-row">
+              <input id="ev-date" type="date">
+              <input id="ev-time" type="time">
+            </div>
+            <div class="form-row">
+              <input id="ev-duration" type="number" value="60" min="5" step="5" title="Süre (dk)">
+              <select id="ev-calendar"></select>
+            </div>
+            <input id="ev-location" placeholder="Konum (isteğe bağlı)">
+            <div class="form-row">
+              <button class="pill accent" id="ev-save">Kaydet</button>
+              <button class="pill ghost" id="ev-cancel">Vazgeç</button>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="side-title" id="cal-day-title">Bugün</h3>
+        <div id="cal-day-events"></div>
+
+        <div class="card" style="margin-top:16px">
+          <h3>Takvim Kaynakları</h3>
+          <div id="calendar-sources"></div>
+          <div class="form-col" style="margin-top:12px">
+            <select id="cal-src-type">
+              <option value="icloud">Apple iCloud Takvimi</option>
+              <option value="ics">Google Takvim (gizli iCal adresi)</option>
+              <option value="ics-generic">Diğer (ICS / webcal adresi)</option>
+            </select>
+            <div id="cal-src-icloud" class="form-col">
+              <input id="cal-apple-id" placeholder="Apple ID (ör. ad@icloud.com)">
+              <input id="cal-apple-pass" type="password" placeholder="Uygulama şifresi">
+            </div>
+            <div id="cal-src-ics" class="form-col" style="display:none">
+              <input id="cal-ics-name" placeholder="Takvim adı (ör. Gmail Takvimim)">
+              <input id="cal-ics-url" placeholder="https://... .ics adresi">
+            </div>
+            <p class="hint" id="cal-src-hint"></p>
+            <button class="pill accent" id="cal-src-add">Takvimi Bağla</button>
+          </div>
         </div>
       </section>
     </main>
