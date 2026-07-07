@@ -5,6 +5,7 @@ import logging
 import secrets
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -16,6 +17,15 @@ log = logging.getLogger("meil")
 
 app = FastAPI(title="Meil — E-posta Asistanı")
 database.init_db()
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _bootstrap_env_account():
@@ -472,6 +482,12 @@ class NoteRequest(BaseModel):
     note: str = ""
 
 
+class AddNoteRequest(BaseModel):
+    path: str
+    author: str = ""
+    content: str
+
+
 class ShareRequest(BaseModel):
     path: str
 
@@ -535,6 +551,29 @@ def dataroom_delete(path: str):
 def dataroom_note(req: NoteRequest):
     _resolve_or_404(req.path)
     database.set_file_note(req.path, req.note.strip())
+    return {"ok": True}
+
+
+@app.get("/api/dataroom/notes")
+def dataroom_get_notes(path: str):
+    """Dosyanın tüm notlarını getirir."""
+    _resolve_or_404(path)
+    notes = database.get_file_notes(path)
+    return {"notes": notes}
+
+
+@app.post("/api/dataroom/notes")
+def dataroom_add_note(req: AddNoteRequest):
+    """Dosyaya yeni not ekler."""
+    _resolve_or_404(req.path)
+    note = database.add_file_note(req.path, req.author.strip(), req.content.strip())
+    return {"ok": True, "note": note}
+
+
+@app.delete("/api/dataroom/notes/{note_id}")
+def dataroom_delete_note(note_id: int):
+    """Bir notu siler."""
+    database.delete_file_note(note_id)
     return {"ok": True}
 
 

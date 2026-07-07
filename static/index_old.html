@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meil</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📬</text></svg>">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Üst mor bar (Teams) -->
+  <div id="topbar">
+    <div class="topbar-title">Meil</div>
+    <div class="topbar-search">🔍 <input id="search-input" placeholder="Ara (gönderen, konu, özet)"></div>
+    <div class="topbar-right">
+      <button id="sync-btn" title="Yeni mailleri getir ve tasnif et">⟳ Eşitle</button>
+      <div class="avatar small" id="me-avatar">M</div>
+    </div>
+  </div>
+
+  <div id="layout">
+    <!-- Sol uygulama rayı (Teams) -->
+    <nav id="rail">
+      <button class="rail-btn active" data-view="inbox" title="Posta">
+        <span class="rail-icon">✉️</span><span class="rail-label">Posta</span>
+      </button>
+      <button class="rail-btn" data-view="dataroom" title="Dataroom">
+        <span class="rail-icon">📁</span><span class="rail-label">Dataroom</span>
+      </button>
+      <button class="rail-btn" data-view="accounts" title="Hesaplar">
+        <span class="rail-icon">👥</span><span class="rail-label">Hesaplar</span>
+      </button>
+    </nav>
+
+    <!-- POSTA görünümü -->
+    <main id="view-inbox" class="view">
+      <section id="list-panel">
+        <div class="panel-header">
+          <h2>Posta</h2>
+          <div class="filters">
+            <select id="account-filter" title="Hesap"></select>
+            <select id="category-filter" title="Kategori"></select>
+            <select id="priority-filter" title="Öncelik">
+              <option value="">Tüm Öncelikler</option>
+              <option value="yüksek">Yüksek</option>
+              <option value="orta">Orta</option>
+              <option value="düşük">Düşük</option>
+            </select>
+          </div>
+        </div>
+        <div id="email-list"></div>
+      </section>
+      <section id="detail-panel">
+        <div class="placeholder">
+          <div class="placeholder-icon">✉️</div>
+          <p>Okumak için bir mail seçin</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- DATAROOM görünümü -->
+    <main id="view-dataroom" class="view" style="display:none">
+      <section id="dataroom-list-panel">
+        <div class="panel-header">
+          <h2>📁 Dataroom</h2>
+          <p class="page-desc" style="margin-top: 6px;">Gelen maillerin ekleri burada gönderen ve tarihe göre saklanır.</p>
+        </div>
+        <div id="dataroom-list"></div>
+      </section>
+      <section id="dataroom-preview-panel">
+        <div class="placeholder">
+          <div class="placeholder-icon">📄</div>
+          <p>Dosya önizlemek için tıklayın</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- HESAPLAR görünümü -->
+    <main id="view-accounts" class="view" style="display:none">
+      <div class="page">
+        <h2 class="page-title">👥 Mail Hesapları</h2>
+        <p class="page-desc">Birden fazla hesap ekleyebilirsiniz — Gmail, Outlook / Microsoft 365 veya şirket mail sunucunuz. Eşitlemede tüm hesapların gelen kutuları taranır.</p>
+        <div id="account-cards"></div>
+
+        <div class="card form-card">
+          <h3>➕ Hesap Ekle</h3>
+          <div class="form-grid">
+            <label>Sağlayıcı
+              <select id="acc-provider">
+                <option value="gmail">Gmail</option>
+                <option value="outlook">Outlook / Microsoft 365</option>
+                <option value="yahoo">Yahoo</option>
+                <option value="yandex">Yandex</option>
+                <option value="custom">Şirket / Özel (IMAP)</option>
+              </select>
+            </label>
+            <label>Görünen ad
+              <input id="acc-name" placeholder="ör. İş Hesabım">
+            </label>
+            <label>E-posta adresi
+              <input id="acc-email" type="email" placeholder="ad@sirket.com">
+            </label>
+            <label>Şifre / Uygulama şifresi
+              <input id="acc-password" type="password" placeholder="••••••••">
+            </label>
+          </div>
+
+          <div id="custom-fields" class="form-grid" style="display:none">
+            <label>IMAP sunucusu <input id="acc-imap-host" placeholder="mail.sirket.com"></label>
+            <label>IMAP port <input id="acc-imap-port" type="number" value="993"></label>
+            <label>SMTP sunucusu <input id="acc-smtp-host" placeholder="mail.sirket.com"></label>
+            <label>SMTP port <input id="acc-smtp-port" type="number" value="465"></label>
+            <label>SMTP güvenlik
+              <select id="acc-smtp-security">
+                <option value="ssl">SSL (port 465)</option>
+                <option value="starttls">STARTTLS (port 587)</option>
+              </select>
+            </label>
+          </div>
+
+          <p class="hint" id="provider-hint"></p>
+          <button class="primary" id="acc-save">Bağlantıyı Test Et ve Ekle</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

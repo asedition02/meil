@@ -307,6 +307,8 @@ table.dataroom .file-actions { display: flex; gap: 4px; justify-content: flex-en
   font-family: inherit; white-space: nowrap;
 }
 .mini-btn:hover { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+.mini-btn.accent { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+.mini-btn.accent:hover { border-color: var(--accent-hover); background: #d4e8e0; }
 .mini-btn.danger:hover { border-color: var(--red); color: var(--red); background: var(--red-soft); }
 .shared-badge { font-size: 11px; color: var(--accent-text); font-weight: 650; }
 
@@ -460,6 +462,105 @@ table.dataroom .file-actions { display: flex; gap: 4px; justify-content: flex-en
 .event-card select {
   padding: 8px 12px; font-size: 13px; border: 1px solid var(--border);
   border-radius: 999px; font-family: inherit; background: var(--panel); color: var(--text);
+}
+
+/* ---------- Dataroom Layout ---------- */
+.page.page-dataroom-layout,
+#view-dataroom .page {
+  max-width: 100%; padding: 0; overflow: hidden; margin: 0; background: transparent;
+  border: none; box-shadow: none; border-radius: 0;
+}
+.page-dataroom-layout {
+  display: flex; gap: 16px; height: calc(100vh - 56px - 40px); overflow: hidden;
+}
+.dataroom-left {
+  flex: 1; display: flex; flex-direction: column; overflow-y: auto; min-width: 0;
+}
+.dataroom-right {
+  width: 320px; border-left: 1px solid var(--border); overflow-y: auto;
+  background: var(--panel-2); border-radius: 14px; padding: 16px;
+}
+
+/* Breadcrumb Navigation */
+.breadcrumb {
+  display: flex; align-items: center; gap: 8px; padding: 8px 0; margin-bottom: 12px;
+  font-size: 13px; flex-wrap: wrap;
+}
+.breadcrumb-btn {
+  background: none; border: none; color: var(--accent); cursor: pointer; font-weight: 500;
+  font-family: inherit; padding: 4px 8px; border-radius: 6px; transition: background 0.2s;
+}
+.breadcrumb-btn:hover { background: var(--accent-soft); }
+
+/* Folder Navigation */
+.folder-btn {
+  background: none; border: none; color: var(--text); cursor: pointer; font-weight: 500;
+  font-family: inherit; padding: 8px 12px; border-radius: 8px; transition: background 0.2s;
+  width: 100%; text-align: left; font-size: 14px;
+}
+.folder-btn:hover { background: var(--panel-2); }
+.folder-row { background: var(--panel-2); }
+
+/* File Actions */
+.file-name-btn {
+  background: none; border: none; color: var(--text); cursor: pointer; font-weight: 400;
+  font-family: inherit; padding: 0; font-size: 13.5px; transition: color 0.2s;
+}
+.file-name-btn:hover { color: var(--accent); }
+
+/* Notes Panel */
+.notes-panel {
+  display: flex; flex-direction: column; gap: 12px;
+}
+.notes-panel h3 {
+  font-size: 14px; font-weight: 600; word-break: break-word; padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.notes-list {
+  flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
+  min-height: 120px;
+}
+
+.note-item {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 9px;
+  padding: 10px; font-size: 13px;
+}
+.note-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+  justify-content: space-between; flex-wrap: wrap;
+}
+.note-author {
+  font-weight: 600; color: var(--accent); font-size: 12px;
+}
+.note-time {
+  font-size: 11px; color: var(--muted);
+}
+.note-delete-btn {
+  background: none; border: none; color: var(--red); cursor: pointer; font-size: 14px;
+  padding: 0 4px; transition: opacity 0.2s;
+}
+.note-delete-btn:hover { opacity: 0.7; }
+.note-content {
+  color: var(--text); line-height: 1.4; word-break: break-word;
+}
+
+.add-note-form {
+  display: flex; flex-direction: column; gap: 8px; padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.add-note-form input,
+.add-note-form textarea {
+  padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); color: var(--text); font-family: inherit; font-size: 12.5px;
+  transition: border-color 0.2s;
+}
+.add-note-form input:focus,
+.add-note-form textarea:focus {
+  outline: none; border-color: var(--accent);
+}
+.add-note-form textarea {
+  resize: vertical; min-height: 80px; line-height: 1.4;
 }
 
 /* ---------- Toast ---------- */

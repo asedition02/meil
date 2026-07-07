@@ -1,3 +1,8 @@
+// Genel yapılandırma
+let config = {
+  USER_NAME: localStorage.getItem("meil-user-name") || "Kullanıcı",
+};
+
 let state = {
   emails: [],
   counts: {},
@@ -119,7 +124,9 @@ document.querySelectorAll(".rail-btn").forEach((btn) => {
     btn.classList.add("active");
     const view = btn.dataset.view;
     ["inbox", "calendar", "dataroom", "accounts"].forEach((v) => {
-      $(`#view-${v}`).style.display = v === view ? "flex" : "none";
+      const elem = $(`#view-${v}`);
+      if (!elem) { console.error(`View element not found: #view-${v}`); return; }
+      elem.style.display = v === view ? "flex" : "none";
     });
     if (view === "calendar") loadCalendar();
     if (view === "dataroom") loadDataroom();
@@ -379,61 +386,212 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal
 
 let dataroomFiles = [];
 let dataroomSearch = "";
+let dataroomCurrentFolder = ".";  // Mevcut klasör
+let dataroomSelectedFile = null;  // Seçili dosya (notlar paneli için)
 
 async function loadDataroom() {
   const data = await api("/api/dataroom");
   dataroomFiles = data.files;
+  dataroomCurrentFolder = ".";
+  dataroomSelectedFile = null;
   renderDataroom();
+  renderNotesPanel();
+}
+
+function getFolderContents(folder) {
+  // folder'ındaki dosyaları ve alt klasörleri döner
+  const contents = { folders: new Set(), files: [] };
+  for (const f of dataroomFiles) {
+    if (f.folder === folder) {
+      contents.files.push(f);
+    } else if (f.folder.startsWith(folder === "." ? "" : folder + "/")) {
+      const rest = f.folder.slice((folder === "." ? 0 : folder.length + 1));
+      const next = rest.split("/")[0];
+      if (next) contents.folders.add(next);
+    }
+  }
+  return { folders: Array.from(contents.folders).sort(), files: contents.files };
 }
 
 function renderDataroom() {
+  console.log("renderDataroom called, dataroomSelectedFile:", dataroomSelectedFile);
   const holder = $("#dataroom-list");
   const q = dataroomSearch.toLowerCase();
-  const files = q
-    ? dataroomFiles.filter((f) => [f.filename, f.folder, f.note].join(" ").toLowerCase().includes(q))
-    : dataroomFiles;
-  if (!files.length) {
+  let files = dataroomFiles;
+  if (q) {
+    files = files.filter((f) => [f.filename, f.folder, f.note].join(" ").toLowerCase().includes(q));
+  }
+  
+  const { folders, files: currentFiles } = getFolderContents(dataroomCurrentFolder);
+  const filteredFiles = files.filter((f) => f.folder === dataroomCurrentFolder);
+  
+  if (!filteredFiles.length && !folders.length) {
     holder.innerHTML = `<div class="placeholder" style="margin-top:40px">
-      ${dataroomFiles.length ? "Aramayla eşleşen dosya yok." : "Dataroom boş. Ekli mailler geldikçe dosyalar birikecek — ya da kendi belgelerinizi yükleyin."}
+      ${dataroomFiles.length ? "Bu klasör boş." : "Dataroom boş. Ekli mailler geldikçe dosyalar birikecek — ya da kendi belgelerinizi yükleyin."}
     </div>`;
     return;
   }
-  holder.innerHTML = `
+  
+  // Breadcrumb navigation
+  let breadcrumb = '<div class="breadcrumb">';
+  if (dataroomCurrentFolder !== ".") {
+    breadcrumb += '<button class="breadcrumb-btn" onclick="dataroomCurrentFolder = \'.\'; dataroomSelectedFile = null; renderDataroom(); renderNotesPanel()">📁 /</button>';
+    const parts = dataroomCurrentFolder.split("/");
+    let path = "";
+    for (let i = 0; i < parts.length; i++) {
+      path = i === 0 ? parts[0] : path + "/" + parts[i];
+      const p = path;
+      breadcrumb += ` / <button class="breadcrumb-btn" onclick="dataroomCurrentFolder = '${p}'; dataroomSelectedFile = null; renderDataroom(); renderNotesPanel()">${esc(parts[i])}</button>`;
+    }
+  } else {
+    breadcrumb += '<span>📁 /</span>';
+  }
+  breadcrumb += '</div>';
+  
+  holder.innerHTML = breadcrumb + `
     <table class="dataroom">
-      <thead><tr><th>Dosya</th><th>Klasör</th><th>Boyut</th><th style="text-align:right">İşlemler</th></tr></thead>
+      <thead><tr><th>Dosya / Klasör</th><th>Boyut</th><th style="text-align:right">İşlemler</th></tr></thead>
       <tbody>
-        ${files.map((f, i) => `
-          <tr>
+        ${folders.map((fld) => `
+          <tr class="folder-row">
             <td>
-              📎 ${esc(f.filename)} ${f.share_token ? '<span class="shared-badge">🔗 paylaşımda</span>' : ""}
-              ${f.note ? `<div class="file-note">📝 ${esc(f.note)}</div>` : ""}
+              <button class="folder-btn" onclick="dataroomCurrentFolder = '${dataroomCurrentFolder === "." ? "" : dataroomCurrentFolder + "/"}${fld}'; dataroomSelectedFile = null; renderDataroom(); renderNotesPanel()">
+                📁 ${esc(fld)}
+              </button>
             </td>
-            <td>${esc(f.folder === "." ? "" : f.folder)}</td>
+            <td></td>
+            <td></td>
+          </tr>`).join("")}
+        ${filteredFiles.map((f, i) => `
+          <tr${dataroomSelectedFile === f.path ? ' class="selected-file-row"' : ''}>
+            <td>
+              <button class="file-name-btn" onclick="dataroomSelectedFile = '${f.path}'; renderDataroom(); renderNotesPanel()">
+                📎 ${esc(f.filename)} ${f.share_token ? '<span class="shared-badge">🔗 paylaşımda</span>' : ""}
+              </button>
+            </td>
             <td>${formatSize(f.size)}</td>
             <td>
               <div class="file-actions">
                 <a class="mini-btn" href="/api/dataroom/download?path=${encodeURIComponent(f.path)}" title="İndir">⬇ İndir</a>
                 <button class="mini-btn" data-act="send" data-i="${i}" title="Mail olarak gönder">✉ Gönder</button>
-                <button class="mini-btn" data-act="note" data-i="${i}" title="Not ekle">📝 Not</button>
                 <button class="mini-btn" data-act="share" data-i="${i}" title="Paylaşım linki">🔗 Paylaş</button>
                 <button class="mini-btn danger" data-act="delete" data-i="${i}" title="Sil">🗑</button>
+                ${dataroomSelectedFile === f.path ? '<button class="mini-btn accent" id="quick-note-btn" title="Not ekle">📝 Not Ekle</button>' : ""}
               </div>
             </td>
           </tr>`).join("")}
       </tbody>
     </table>`;
   holder.querySelectorAll("[data-act]").forEach((btn) => {
-    const file = files[parseInt(btn.dataset.i)];
+    const file = filteredFiles[parseInt(btn.dataset.i)];
     btn.onclick = () => {
       if (btn.dataset.act === "send") openSendModal(file);
-      if (btn.dataset.act === "note") openNoteModal(file);
       if (btn.dataset.act === "share") openShareModal(file);
       if (btn.dataset.act === "delete") deleteDataroomFile(file);
     };
   });
+  
+  // Quick Note Button
+  const quickNoteBtn = holder.querySelector("#quick-note-btn");
+  if (quickNoteBtn) {
+    quickNoteBtn.onclick = () => {
+      const textarea = $("#note-content");
+      if (textarea) textarea.focus();
+    };
+  }
 }
 
 $("#dataroom-search").oninput = (e) => { dataroomSearch = e.target.value; renderDataroom(); };
+
+// Notlar paneli
+function renderNotesPanel() {
+  const notesPanel = $("#dataroom-notes");
+  if (!notesPanel) return; // Panel henüz yüklenmemişse çık
+  
+  if (!dataroomSelectedFile) {
+    notesPanel.innerHTML = '<div class="placeholder">Dosya seçin</div>';
+    return;
+  }
+  
+  const file = dataroomFiles.find((f) => f.path === dataroomSelectedFile);
+  if (!file) {
+    notesPanel.innerHTML = '<div class="placeholder">Dosya bulunamadı</div>';
+    return;
+  }
+  
+  notesPanel.innerHTML = `
+    <div class="notes-panel">
+      <h3>📝 ${esc(file.filename)}</h3>
+      <div class="notes-list" id="notes-list"></div>
+      <div class="add-note-form">
+        <input id="note-author" placeholder="Adınız..." value="${config.USER_NAME || ""}" readonly>
+        <textarea id="note-content" placeholder="Not ekleyin..."></textarea>
+        <button id="add-note-btn" class="pill accent">➤ Not Ekle</button>
+      </div>
+    </div>`;
+  
+  loadFileNotes(dataroomSelectedFile);
+}
+
+async function loadFileNotes(filePath) {
+  try {
+    const data = await api(`/api/dataroom/notes?path=${encodeURIComponent(filePath)}`);
+    const list = $("#notes-list");
+    if (!list) return; // Notlar listesi henüz yüklenmemişse çık
+    
+    if (!data.notes.length) {
+      list.innerHTML = '<div class="placeholder" style="font-size:12px">Henüz not yok</div>';
+    } else {
+      list.innerHTML = data.notes.map((n) => `
+        <div class="note-item">
+          <div class="note-header">
+            <span class="note-author">👤 ${esc(n.author)}</span>
+            <span class="note-time">${formatDateFull(n.created_at)}</span>
+            <button class="note-delete-btn" onclick="deleteFileNote(${n.id})">✕</button>
+          </div>
+          <div class="note-content">${esc(n.content)}</div>
+        </div>`).join("");
+    }
+    
+    const addBtn = $("#add-note-btn");
+    if (addBtn) {
+      addBtn.onclick = async () => {
+        const author = $("#note-author").value.trim();
+        const content = $("#note-content").value.trim();
+        if (!content) return toast("Not yazınız", true);
+        try {
+          addBtn.disabled = true;
+          addBtn.textContent = "Ekleniyor...";
+          await api("/api/dataroom/notes", {
+            method: "POST",
+            body: JSON.stringify({ path: filePath, author, content }),
+          });
+          toast("Not eklendi ✓");
+          $("#note-content").value = "";
+          await loadFileNotes(filePath);
+        } catch (err) {
+          toast(err.message, true);
+        } finally {
+          addBtn.disabled = false;
+          addBtn.textContent = "➤ Not Ekle";
+        }
+      };
+    }
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function deleteFileNote(noteId) {
+  if (!confirm("Bu notu silmek istediğinizden emin misiniz?")) return;
+  try {
+    await api(`/api/dataroom/notes/${noteId}`, { method: "DELETE" });
+    toast("Not silindi");
+    await loadFileNotes(dataroomSelectedFile);
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
 
 // Yükleme
 $("#upload-btn").onclick = () => $("#upload-input").click();

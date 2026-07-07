@@ -138,19 +138,22 @@
 
     <!-- DATAROOM -->
     <main id="view-dataroom" class="view" style="display:none">
-      <div class="page page-wide">
-        <div class="page-header">
-          <div>
-            <h2 class="page-title">Dataroom</h2>
-            <p class="page-desc">Mail ekleri otomatik olarak buraya kaydedilir. Kendi belgelerinizi de yükleyip kişisel depolama alanı olarak kullanabilirsiniz — not ekleyin, mail atın, paylaşım linkiyle paylaşın.</p>
+      <div class="page page-dataroom-layout">
+        <div class="dataroom-left">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title">Dataroom</h2>
+              <p class="page-desc">Mail ekleri otomatik olarak buraya kaydedilir. Kendi belgelerinizi de yükleyip kişisel depolama alanı olarak kullanabilirsiniz — not ekleyin, mail atın, paylaşım linkiyle paylaşın.</p>
+            </div>
+            <div class="page-actions">
+              <input id="upload-input" type="file" multiple style="display:none">
+              <button class="pill accent" id="upload-btn">⬆ Dosya Yükle</button>
+            </div>
           </div>
-          <div class="page-actions">
-            <input id="upload-input" type="file" multiple style="display:none">
-            <button class="pill accent" id="upload-btn">⬆ Dosya Yükle</button>
-          </div>
+          <input id="dataroom-search" class="search-inline" placeholder="Dosya ara...">
+          <div id="dataroom-list"></div>
         </div>
-        <input id="dataroom-search" class="search-inline" placeholder="Dosya ara...">
-        <div id="dataroom-list"></div>
+        <div class="dataroom-right" id="dataroom-notes"></div>
       </div>
     </main>
 
@@ -209,6 +212,6 @@
   </div>
 
   <div id="toast"></div>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=3"></script>
 </body>
 </html>

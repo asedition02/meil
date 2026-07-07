@@ -75,6 +75,16 @@ CREATE TABLE IF NOT EXISTS dataroom_meta (
     share_token TEXT UNIQUE,
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS dataroom_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_path TEXT,
+    author TEXT,
+    content TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_dataroom_notes_path ON dataroom_notes(file_path);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_msgid_account
     ON emails(message_id, account_id);
 CREATE INDEX IF NOT EXISTS idx_emails_category ON emails(category);
@@ -455,3 +465,36 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         d["event"] = None
     d.pop("event_json", None)
     return d
+
+
+# ---- Dataroom Notes (Multiple) ----
+
+def get_file_notes(file_path: str):
+    """Dosyaya ait tüm notları getirir."""
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT id, author, content, created_at FROM dataroom_notes WHERE file_path = ? ORDER BY created_at DESC",
+            (file_path,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def add_file_note(file_path: str, author: str, content: str):
+    """Dosyaya yeni not ekler."""
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO dataroom_notes (file_path, author, content) VALUES (?, ?, ?)",
+            (file_path, author or "Anonim", content.strip()),
+        )
+        # Son eklenen notu döner
+        row = db.execute(
+            "SELECT id, author, content, created_at FROM dataroom_notes WHERE file_path = ? ORDER BY created_at DESC LIMIT 1",
+            (file_path,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def delete_file_note(note_id: int):
+    """Bir notu siler."""
+    with get_db() as db:
+        db.execute("DELETE FROM dataroom_notes WHERE id = ?", (note_id,))
