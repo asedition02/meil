@@ -98,3 +98,44 @@ def delete_file(rel_path: str):
     while parent != root and parent.is_dir() and not any(parent.iterdir()):
         parent.rmdir()
         parent = parent.parent
+
+
+def list_folders() -> list[str]:
+    """Dataroom'daki tüm klasörleri (boşlar dahil) listeler."""
+    folders = []
+    for path in sorted(config.DATAROOM_DIR.rglob("*")):
+        if path.is_dir():
+            folders.append(str(path.relative_to(config.DATAROOM_DIR)))
+    return folders
+
+
+def _safe_folder(folder: str) -> Path:
+    parts = [_safe_name(p) for p in (folder or "").split("/") if p.strip()]
+    return config.DATAROOM_DIR.joinpath(*parts) if parts else config.DATAROOM_DIR
+
+
+def create_folder(folder: str) -> str:
+    target = _safe_folder(folder)
+    target.mkdir(parents=True, exist_ok=True)
+    return str(target.relative_to(config.DATAROOM_DIR)) if target != config.DATAROOM_DIR else ""
+
+
+def move_file(rel_path: str, folder: str) -> str:
+    """Dosyayı başka klasöre taşır; yeni göreli yolu döner."""
+    source = resolve_file(rel_path)
+    target_dir = _safe_folder(folder)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / source.name
+    counter = 1
+    while target.exists():
+        stem, suffix = os.path.splitext(source.name)
+        target = target_dir / f"{stem}_{counter}{suffix}"
+        counter += 1
+    source.rename(target)
+    # boşalan eski klasörleri temizle
+    root = config.DATAROOM_DIR.resolve()
+    parent = source.parent
+    while parent != root and parent.is_dir() and not any(parent.iterdir()):
+        parent.rmdir()
+        parent = parent.parent
+    return str(target.relative_to(config.DATAROOM_DIR))

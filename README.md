@@ -5,7 +5,7 @@ Microsoft Teams görünümlü arayüzüyle **birden fazla mail hesabına** (Gmai
 1. **Tasnif eder** — Gelen mailleri Claude ile kategorilere ayırır (Önemli, İş, Kişisel, Fatura/Finans, Bülten, Tanıtım/Reklam, Spam, Diğer) ve öncelik atar.
 2. **Okur ve özetler** — Her mail için 1-3 cümlelik Türkçe özet çıkarır.
 3. **Yanıt önerir** — Yanıt gerektiren mailler için gönderilmeye hazır taslak yazar. Taslağı düzenleyebilir, "Yeniden Öner" ile talimat verebilir ve **sizin onayınızla** gönderirsiniz. Onaysız hiçbir mail gönderilmez.
-4. **Dataroom** — Mail ekleri `data/dataroom/GÖNDEREN/TARİH/` yapısında otomatik saklanır. Aynı zamanda kişisel depolama alanıdır: kendi belgelerinizi yükleyin, not ekleyin, dataroom'dan doğrudan mail eki olarak gönderin veya paylaşım linki oluşturup başkalarıyla paylaşın (link istendiğinde iptal edilebilir).
+4. **Dataroom** — Mail ekleri otomatik saklanır; aynı zamanda tam donanımlı bir sanal veri odası: klasör ağacı ve taşıma, belge önizleme (PDF/görsel), not + etiket + favori, süreli paylaşım linkleri (indirme sayaçlı, iptal edilebilir), belgeyi doğrudan mail atma, toplu ZIP indirme/silme ve tüm işlemlerin kaydedildiği etkinlik günlüğü (audit trail).
 5. **Takvim** — Apple iCloud (CalDAV) ve Google Takvim (gizli iCal adresi) entegrasyonlu ay görünümü. Claude, maillerdeki toplantı/randevu/son tarihleri otomatik tespit eder; tek tıkla yerel takvime veya iCloud takviminize eklersiniz.
 
 ## Kurulum
@@ -18,9 +18,11 @@ pip install -r requirements.txt
 cp .env.example .env
 # .env dosyasını düzenleyin (aşağıya bakın)
 
-# 3. Başlatın
-uvicorn app.main:app --port 8000
+# 3. Başlatın (--reload: kod güncellemelerinde otomatik yeniden başlar)
+uvicorn app.main:app --port 8000 --reload
 ```
+
+> **Güncelleme sonrası:** `git pull` yaptıysanız `pip install -r requirements.txt` çalıştırın ve sunucuyu **yeniden başlatın** — aksi halde arayüz yenilenir ama API eski kalır ve "Method Not Allowed" benzeri hatalar görürsünüz (`--reload` ile başlattıysanız otomatik yenilenir).
 
 Tarayıcıda **http://localhost:8000** adresini açın:
 
