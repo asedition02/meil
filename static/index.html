@@ -138,20 +138,42 @@
 
     <!-- DATAROOM -->
     <main id="view-dataroom" class="view" style="display:none">
-      <div class="page page-wide">
-        <div class="page-header">
-          <div>
-            <h2 class="page-title">Dataroom</h2>
-            <p class="page-desc">Mail ekleri otomatik olarak buraya kaydedilir. Kendi belgelerinizi de yükleyip kişisel depolama alanı olarak kullanabilirsiniz — not ekleyin, mail atın, paylaşım linkiyle paylaşın.</p>
-          </div>
-          <div class="page-actions">
+      <section id="dr-side">
+        <div id="dr-stats" class="dr-stats"></div>
+        <div class="dr-side-head">
+          <h3>Klasörler</h3>
+          <button class="mini-btn" id="dr-new-folder" title="Yeni klasör">＋</button>
+        </div>
+        <div id="dr-tree"></div>
+        <h3 class="dr-activity-title">Etkinlik Günlüğü</h3>
+        <div id="dr-activity"></div>
+      </section>
+
+      <section id="dr-main">
+        <div class="dr-toolbar">
+          <div id="dr-breadcrumb" class="dr-breadcrumb"></div>
+          <div class="dr-toolbar-actions">
+            <input id="dataroom-search" class="search-inline" placeholder="Dosya, etiket, not ara...">
+            <select id="dr-sort" class="pill-select">
+              <option value="date">Yeniden eskiye</option>
+              <option value="name">Ada göre</option>
+              <option value="size">Boyuta göre</option>
+            </select>
             <input id="upload-input" type="file" multiple style="display:none">
-            <button class="pill accent" id="upload-btn">⬆ Dosya Yükle</button>
+            <button class="pill accent" id="upload-btn">⬆ Yükle</button>
           </div>
         </div>
-        <input id="dataroom-search" class="search-inline" placeholder="Dosya ara...">
+        <div class="dr-filters">
+          <div class="chips" id="dr-type-chips"></div>
+        </div>
+        <div id="dr-bulkbar" class="dr-bulkbar" style="display:none">
+          <span id="dr-bulk-count"></span>
+          <button class="pill ghost" id="dr-bulk-zip">⬇ ZIP indir</button>
+          <button class="pill danger-ghost" id="dr-bulk-delete">🗑 Sil</button>
+          <button class="pill ghost" id="dr-bulk-clear">✕ Vazgeç</button>
+        </div>
         <div id="dataroom-list"></div>
-      </div>
+      </section>
     </main>
 
     <!-- HESAPLAR -->

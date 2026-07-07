@@ -310,6 +310,70 @@ table.dataroom .file-actions { display: flex; gap: 4px; justify-content: flex-en
 .mini-btn.danger:hover { border-color: var(--red); color: var(--red); background: var(--red-soft); }
 .shared-badge { font-size: 11px; color: var(--accent-text); font-weight: 650; }
 
+/* ---------- Dataroom v2 ---------- */
+#dr-side {
+  width: 265px; flex-shrink: 0; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px;
+}
+.dr-stats {
+  background: var(--accent-soft); border-radius: var(--radius-sm);
+  padding: 12px 14px; margin-bottom: 16px; font-size: 12.5px;
+  color: var(--accent-text); font-weight: 600; line-height: 1.7;
+}
+.dr-side-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+#dr-side h3 {
+  font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.7px;
+  color: var(--muted); font-weight: 700;
+}
+.dr-activity-title { margin: 18px 0 8px; }
+.dr-folder {
+  display: flex; align-items: center; gap: 7px; padding: 6px 9px;
+  border-radius: 7px; cursor: pointer; font-size: 13px;
+  color: var(--text); overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.dr-folder:hover { background: var(--panel-2); }
+.dr-folder.active { background: var(--accent-soft); color: var(--accent-text); font-weight: 650; }
+.dr-folder .indent { flex-shrink: 0; }
+
+.dr-act-row { display: flex; gap: 8px; padding: 6px 2px; font-size: 12px; border-bottom: 1px solid var(--border); }
+.dr-act-row:last-child { border-bottom: none; }
+.dr-act-icon { flex-shrink: 0; }
+.dr-act-body { flex: 1; min-width: 0; }
+.dr-act-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dr-act-time { color: var(--muted); font-size: 11px; }
+
+#dr-main {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px;
+}
+.dr-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.dr-toolbar-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.dr-toolbar-actions .search-inline { margin-bottom: 0; max-width: 260px; }
+.dr-breadcrumb { font-size: 15px; font-weight: 700; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.dr-breadcrumb a { color: var(--accent-text); text-decoration: none; cursor: pointer; }
+.dr-breadcrumb .sep { color: var(--muted); font-weight: 400; }
+.dr-filters { margin-bottom: 10px; }
+.dr-bulkbar {
+  display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+  background: var(--accent-soft); border-radius: var(--radius-sm); margin-bottom: 10px;
+  font-size: 13px; font-weight: 650; color: var(--accent-text);
+}
+#dataroom-list { flex: 1; overflow-y: auto; }
+table.dataroom input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.dr-fav { cursor: pointer; font-size: 15px; opacity: 0.35; background: none; border: none; }
+.dr-fav.on { opacity: 1; }
+.file-name-link { cursor: pointer; font-weight: 600; }
+.file-name-link:hover { color: var(--accent-text); text-decoration: underline; }
+.tag-chip {
+  display: inline-block; font-size: 10.5px; padding: 1px 8px; border-radius: 999px;
+  background: var(--amber-soft); color: var(--amber); font-weight: 650; margin: 2px 3px 0 0;
+}
+#preview-frame { width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; }
+.modal-wide { max-width: 900px !important; }
+.modal-list button { width: 100%; text-align: left; margin-bottom: 6px; }
+
 /* ---------- Modal ---------- */
 #modal-overlay {
   position: fixed; inset: 0; background: rgba(10, 14, 20, 0.45); z-index: 90;

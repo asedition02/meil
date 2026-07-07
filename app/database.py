@@ -72,7 +72,21 @@ CREATE TABLE IF NOT EXISTS dataroom_meta (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     path TEXT UNIQUE,                   -- dataroom köküne göre dosya yolu
     note TEXT,
+    tags TEXT,                          -- virgülle ayrılmış etiketler
+    favorite INTEGER DEFAULT 0,
     share_token TEXT UNIQUE,
+    share_expires TEXT,                 -- ISO tarih; NULL = süresiz
+    share_downloads INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS dataroom_activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action TEXT,                        -- upload | delete | note | tags | share_created |
+                                        -- share_revoked | share_download | send | move |
+                                        -- folder | download
+    path TEXT,
+    detail TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_msgid_account
@@ -113,6 +127,16 @@ def _migrate(db: sqlite3.Connection):
     elif cols and "event_json" not in cols:
         # takvim öncesi şema → event_json sütunu ekle
         db.execute("ALTER TABLE emails ADD COLUMN event_json TEXT")
+    meta_cols = {r["name"] for r in db.execute("PRAGMA table_info(dataroom_meta)").fetchall()}
+    if meta_cols and "tags" not in meta_cols:
+        # dataroom v2 öncesi şema → yeni sütunlar
+        for stmt in (
+            "ALTER TABLE dataroom_meta ADD COLUMN tags TEXT",
+            "ALTER TABLE dataroom_meta ADD COLUMN favorite INTEGER DEFAULT 0",
+            "ALTER TABLE dataroom_meta ADD COLUMN share_expires TEXT",
+            "ALTER TABLE dataroom_meta ADD COLUMN share_downloads INTEGER DEFAULT 0",
+        ):
+            db.execute(stmt)
 
 
 def init_db():
@@ -295,57 +319,122 @@ def get_event(event_id: int) -> dict | None:
         return dict(row) if row else None
 
 
-# ---- Dataroom meta (not + paylaşım linki) ----
+# ---- Dataroom meta (not, etiket, favori, paylaşım) ----
 
 def all_file_meta() -> dict:
-    """path → {note, share_token} eşlemesi."""
+    """path → meta eşlemesi."""
     with get_db() as db:
-        rows = db.execute("SELECT path, note, share_token FROM dataroom_meta").fetchall()
-        return {r["path"]: {"note": r["note"], "share_token": r["share_token"]} for r in rows}
+        rows = db.execute(
+            """SELECT path, note, tags, favorite, share_token, share_expires,
+                      share_downloads FROM dataroom_meta"""
+        ).fetchall()
+        return {
+            r["path"]: {
+                "note": r["note"],
+                "tags": r["tags"],
+                "favorite": bool(r["favorite"]),
+                "share_token": r["share_token"],
+                "share_expires": r["share_expires"],
+                "share_downloads": r["share_downloads"] or 0,
+            }
+            for r in rows
+        }
+
+
+def _meta_upsert(path: str, column: str, value):
+    with get_db() as db:
+        db.execute(
+            f"""INSERT INTO dataroom_meta (path, {column}) VALUES (?, ?)
+                ON CONFLICT(path) DO UPDATE SET {column} = excluded.{column}""",
+            (path, value),
+        )
 
 
 def set_file_note(path: str, note: str):
+    _meta_upsert(path, "note", note)
+
+
+def set_file_tags(path: str, tags: str):
+    _meta_upsert(path, "tags", tags)
+
+
+def set_favorite(path: str, favorite: bool):
+    _meta_upsert(path, "favorite", 1 if favorite else 0)
+
+
+def set_share_token(path: str, token: str, expires: str | None = None):
     with get_db() as db:
         db.execute(
-            """INSERT INTO dataroom_meta (path, note) VALUES (?, ?)
-               ON CONFLICT(path) DO UPDATE SET note = excluded.note""",
-            (path, note),
+            """INSERT INTO dataroom_meta (path, share_token, share_expires, share_downloads)
+               VALUES (?, ?, ?, 0)
+               ON CONFLICT(path) DO UPDATE SET
+                   share_token = excluded.share_token,
+                   share_expires = excluded.share_expires,
+                   share_downloads = 0""",
+            (path, token, expires),
         )
 
 
-def set_share_token(path: str, token: str):
-    with get_db() as db:
-        db.execute(
-            """INSERT INTO dataroom_meta (path, share_token) VALUES (?, ?)
-               ON CONFLICT(path) DO UPDATE SET share_token = excluded.share_token""",
-            (path, token),
-        )
-
-
-def get_share_token(path: str) -> str | None:
+def get_share_info(path: str) -> dict | None:
     with get_db() as db:
         row = db.execute(
-            "SELECT share_token FROM dataroom_meta WHERE path = ?", (path,)
+            """SELECT share_token, share_expires, share_downloads
+               FROM dataroom_meta WHERE path = ?""",
+            (path,),
         ).fetchone()
-        return row["share_token"] if row else None
+        return dict(row) if row else None
 
 
 def clear_share_token(path: str):
     with get_db() as db:
-        db.execute("UPDATE dataroom_meta SET share_token = NULL WHERE path = ?", (path,))
+        db.execute(
+            "UPDATE dataroom_meta SET share_token = NULL, share_expires = NULL WHERE path = ?",
+            (path,),
+        )
 
 
-def get_path_by_token(token: str) -> str | None:
+def get_share_by_token(token: str) -> dict | None:
     with get_db() as db:
         row = db.execute(
-            "SELECT path FROM dataroom_meta WHERE share_token = ?", (token,)
+            "SELECT path, share_expires FROM dataroom_meta WHERE share_token = ?", (token,)
         ).fetchone()
-        return row["path"] if row else None
+        return dict(row) if row else None
+
+
+def increment_share_downloads(path: str):
+    with get_db() as db:
+        db.execute(
+            "UPDATE dataroom_meta SET share_downloads = COALESCE(share_downloads, 0) + 1 WHERE path = ?",
+            (path,),
+        )
+
+
+def update_meta_path(old_path: str, new_path: str):
+    with get_db() as db:
+        db.execute("UPDATE dataroom_meta SET path = ? WHERE path = ?", (new_path, old_path))
 
 
 def delete_file_meta(path: str):
     with get_db() as db:
         db.execute("DELETE FROM dataroom_meta WHERE path = ?", (path,))
+
+
+# ---- Dataroom etkinlik günlüğü ----
+
+def log_activity(action: str, path: str, detail: str = ""):
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO dataroom_activity (action, path, detail) VALUES (?, ?, ?)",
+            (action, path, detail),
+        )
+
+
+def list_activity(limit: int = 25) -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT * FROM dataroom_activity ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 # ---- Mailler ----

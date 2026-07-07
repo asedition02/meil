@@ -45,11 +45,16 @@ function toast(msg, isError = false) {
   setTimeout(() => (el.className = ""), 4500);
 }
 
+const RESTART_MSG =
+  "Sunucu eski sürümde çalışıyor — uvicorn'u durdurup (Ctrl+C) yeniden başlatın. " +
+  "Güncellemelerin yüklenmesi için sunucunun yeniden başlatılması gerekir.";
+
 async function api(path, options = {}) {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
+  if (res.status === 405) throw new Error(RESTART_MSG);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || `Hata: ${res.status}`);
   return data;
@@ -375,90 +380,355 @@ function closeModal() {
 $("#modal-overlay").onclick = (e) => { if (e.target.id === "modal-overlay") closeModal(); };
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 
-// ---- Dataroom ----
+// ---- Dataroom v2 ----
 
-let dataroomFiles = [];
-let dataroomSearch = "";
+const dr = {
+  files: [], folders: [], activity: [], stats: {},
+  folder: "", search: "", sort: "date", type: "all", favOnly: false,
+  selected: new Set(),
+};
+
+const DR_TYPES = {
+  pdf: ["pdf"],
+  office: ["doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv", "txt", "rtf", "odt", "ods"],
+  image: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "heic"],
+};
+
+function drTypeOf(name) {
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  for (const [t, exts] of Object.entries(DR_TYPES)) if (exts.includes(ext)) return t;
+  return "other";
+}
+
+function drDate(epoch) {
+  const d = new Date(epoch * 1000);
+  return d.toLocaleDateString("tr-TR", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function relTime(sqliteUtc) {
+  const d = new Date(sqliteUtc.replace(" ", "T") + "Z");
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return "az önce";
+  if (mins < 60) return `${mins} dk önce`;
+  if (mins < 1440) return `${Math.round(mins / 60)} sa önce`;
+  return `${Math.round(mins / 1440)} gün önce`;
+}
 
 async function loadDataroom() {
   const data = await api("/api/dataroom");
-  dataroomFiles = data.files;
+  dr.files = data.files;
+  dr.folders = data.folders;
+  dr.activity = data.activity;
+  dr.stats = data.stats;
+  dr.selected = new Set([...dr.selected].filter((p) => dr.files.some((f) => f.path === p)));
+  renderDrStats();
+  renderDrTree();
+  renderDrActivity();
   renderDataroom();
 }
 
+function renderDrStats() {
+  const s = dr.stats;
+  $("#dr-stats").innerHTML =
+    `📦 ${s.count || 0} dosya · ${formatSize(s.size || 0)}<br>🔗 ${s.shared || 0} dosya paylaşımda`;
+}
+
+function renderDrTree() {
+  const rows = [`<div class="dr-folder${dr.folder === "" ? " active" : ""}" data-folder="">🏠 Tüm Dosyalar</div>`];
+  for (const folder of dr.folders) {
+    const depth = folder.split("/").length - 1;
+    const name = folder.split("/").pop();
+    rows.push(
+      `<div class="dr-folder${dr.folder === folder ? " active" : ""}" data-folder="${esc(folder)}" title="${esc(folder)}">` +
+      `<span class="indent" style="width:${depth * 14}px"></span>📁 ${esc(name)}</div>`
+    );
+  }
+  $("#dr-tree").innerHTML = rows.join("");
+  $("#dr-tree").querySelectorAll(".dr-folder").forEach((el) => {
+    el.onclick = () => { dr.folder = el.dataset.folder; renderDrTree(); renderDataroom(); };
+  });
+}
+
+const DR_ACT_LABELS = {
+  upload: ["⬆", "yüklendi"], delete: ["🗑", "silindi"], note: ["📝", "not/etiket güncellendi"],
+  share_created: ["🔗", "paylaşıma açıldı"], share_revoked: ["🚫", "paylaşım kapatıldı"],
+  share_download: ["👤", "paylaşım linkinden indirildi"], send: ["✉", "mail atıldı"],
+  move: ["📂", "taşındı"], folder: ["📁", "klasör oluşturuldu"], download: ["⬇", "indirildi"],
+};
+
+function renderDrActivity() {
+  const holder = $("#dr-activity");
+  if (!dr.activity.length) {
+    holder.innerHTML = `<p class="hint">Henüz etkinlik yok.</p>`;
+    return;
+  }
+  holder.innerHTML = dr.activity.slice(0, 15).map((a) => {
+    const [icon, label] = DR_ACT_LABELS[a.action] || ["•", a.action];
+    const name = (a.path || "").split("/").pop();
+    const extra = a.action === "send" && a.detail ? ` → ${a.detail}` : "";
+    return `<div class="dr-act-row">
+      <span class="dr-act-icon">${icon}</span>
+      <div class="dr-act-body">
+        <div class="dr-act-text" title="${esc(a.path || "")}">${esc(name)} ${label}${esc(extra)}</div>
+        <div class="dr-act-time">${relTime(a.created_at)}</div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderDrBreadcrumb() {
+  const parts = dr.folder ? dr.folder.split("/") : [];
+  let html = `<a data-goto="">Dataroom</a>`;
+  let acc = "";
+  for (const p of parts) {
+    acc = acc ? `${acc}/${p}` : p;
+    html += ` <span class="sep">/</span> <a data-goto="${esc(acc)}">${esc(p)}</a>`;
+  }
+  $("#dr-breadcrumb").innerHTML = html;
+  $("#dr-breadcrumb").querySelectorAll("a").forEach((a) => {
+    a.onclick = () => { dr.folder = a.dataset.goto; renderDrTree(); renderDataroom(); };
+  });
+}
+
+function drScopedFiles() {
+  return dr.files.filter((f) =>
+    !dr.folder || f.folder === dr.folder || f.folder.startsWith(dr.folder + "/"));
+}
+
+function visibleDrFiles() {
+  let files = drScopedFiles();
+  if (dr.favOnly) files = files.filter((f) => f.favorite);
+  if (dr.type !== "all") files = files.filter((f) => drTypeOf(f.filename) === dr.type);
+  if (dr.search) {
+    const q = dr.search.toLowerCase();
+    files = files.filter((f) =>
+      [f.filename, f.folder, f.note, (f.tags || []).join(" ")].join(" ").toLowerCase().includes(q));
+  }
+  if (dr.sort === "name") files.sort((a, b) => a.filename.localeCompare(b.filename, "tr"));
+  else if (dr.sort === "size") files.sort((a, b) => b.size - a.size);
+  else files.sort((a, b) => b.modified - a.modified);
+  return files;
+}
+
+function renderDrTypeChips() {
+  const scoped = drScopedFiles();
+  const count = (t) => scoped.filter((f) => drTypeOf(f.filename) === t).length;
+  const chips = [
+    ["all", `Tümü <span class="n">${scoped.length}</span>`],
+    ["fav", `⭐ Favoriler <span class="n">${scoped.filter((f) => f.favorite).length}</span>`],
+    ["pdf", `PDF <span class="n">${count("pdf")}</span>`],
+    ["office", `Ofis <span class="n">${count("office")}</span>`],
+    ["image", `Görsel <span class="n">${count("image")}</span>`],
+    ["other", `Diğer <span class="n">${count("other")}</span>`],
+  ];
+  $("#dr-type-chips").innerHTML = chips.map(([val, label]) => {
+    const active = val === "fav" ? dr.favOnly : (!dr.favOnly && dr.type === val);
+    return `<button class="chip${active ? " active" : ""}" data-type="${val}">${label}</button>`;
+  }).join("");
+  $("#dr-type-chips").querySelectorAll(".chip").forEach((chip) => {
+    chip.onclick = () => {
+      if (chip.dataset.type === "fav") { dr.favOnly = !dr.favOnly; }
+      else { dr.favOnly = false; dr.type = chip.dataset.type; }
+      renderDataroom();
+    };
+  });
+}
+
+function renderDrBulkbar() {
+  const bar = $("#dr-bulkbar");
+  if (!dr.selected.size) { bar.style.display = "none"; return; }
+  bar.style.display = "flex";
+  $("#dr-bulk-count").textContent = `${dr.selected.size} dosya seçili`;
+}
+
 function renderDataroom() {
+  renderDrBreadcrumb();
+  renderDrTypeChips();
+  renderDrBulkbar();
   const holder = $("#dataroom-list");
-  const q = dataroomSearch.toLowerCase();
-  const files = q
-    ? dataroomFiles.filter((f) => [f.filename, f.folder, f.note].join(" ").toLowerCase().includes(q))
-    : dataroomFiles;
+  const files = visibleDrFiles();
   if (!files.length) {
     holder.innerHTML = `<div class="placeholder" style="margin-top:40px">
-      ${dataroomFiles.length ? "Aramayla eşleşen dosya yok." : "Dataroom boş. Ekli mailler geldikçe dosyalar birikecek — ya da kendi belgelerinizi yükleyin."}
+      ${dr.files.length ? "Bu görünümde dosya yok." : "Dataroom boş — mail ekleri geldikçe birikecek, ya da kendi belgelerinizi yükleyin."}
     </div>`;
     return;
   }
   holder.innerHTML = `
     <table class="dataroom">
-      <thead><tr><th>Dosya</th><th>Klasör</th><th>Boyut</th><th style="text-align:right">İşlemler</th></tr></thead>
+      <thead><tr>
+        <th style="width:30px"><input type="checkbox" id="dr-check-all"></th>
+        <th style="width:30px"></th>
+        <th>Dosya</th><th>Klasör</th><th>Boyut</th><th>Tarih</th>
+        <th style="text-align:right">İşlemler</th>
+      </tr></thead>
       <tbody>
         ${files.map((f, i) => `
           <tr>
+            <td><input type="checkbox" class="dr-check" data-path="${esc(f.path)}" ${dr.selected.has(f.path) ? "checked" : ""}></td>
+            <td><button class="dr-fav${f.favorite ? " on" : ""}" data-fav="${i}" title="Favori">⭐</button></td>
             <td>
-              📎 ${esc(f.filename)} ${f.share_token ? '<span class="shared-badge">🔗 paylaşımda</span>' : ""}
+              <span class="file-name-link" data-preview="${i}">📎 ${esc(f.filename)}</span>
+              ${f.share_token ? `<span class="shared-badge">🔗 paylaşımda${f.share_downloads ? ` · ${f.share_downloads} indirme` : ""}</span>` : ""}
+              ${(f.tags || []).map((t) => `<span class="tag-chip">${esc(t)}</span>`).join("")}
               ${f.note ? `<div class="file-note">📝 ${esc(f.note)}</div>` : ""}
             </td>
             <td>${esc(f.folder === "." ? "" : f.folder)}</td>
             <td>${formatSize(f.size)}</td>
+            <td>${drDate(f.modified)}</td>
             <td>
               <div class="file-actions">
-                <a class="mini-btn" href="/api/dataroom/download?path=${encodeURIComponent(f.path)}" title="İndir">⬇ İndir</a>
-                <button class="mini-btn" data-act="send" data-i="${i}" title="Mail olarak gönder">✉ Gönder</button>
-                <button class="mini-btn" data-act="note" data-i="${i}" title="Not ekle">📝 Not</button>
-                <button class="mini-btn" data-act="share" data-i="${i}" title="Paylaşım linki">🔗 Paylaş</button>
-                <button class="mini-btn danger" data-act="delete" data-i="${i}" title="Sil">🗑</button>
+                <a class="mini-btn" href="/api/dataroom/download?path=${encodeURIComponent(f.path)}" title="İndir">⬇</a>
+                <button class="mini-btn" data-act="send" data-i="${i}" title="Mail at">✉</button>
+                <button class="mini-btn" data-act="share" data-i="${i}" title="Paylaş">🔗</button>
+                <button class="mini-btn" data-act="more" data-i="${i}" title="Diğer">⋯</button>
               </div>
             </td>
           </tr>`).join("")}
       </tbody>
     </table>`;
+
+  holder.querySelectorAll(".dr-check").forEach((cb) => {
+    cb.onchange = () => {
+      if (cb.checked) dr.selected.add(cb.dataset.path);
+      else dr.selected.delete(cb.dataset.path);
+      renderDrBulkbar();
+    };
+  });
+  const checkAll = $("#dr-check-all");
+  if (checkAll) checkAll.onchange = () => {
+    files.forEach((f) => checkAll.checked ? dr.selected.add(f.path) : dr.selected.delete(f.path));
+    renderDataroom();
+  };
+  holder.querySelectorAll("[data-fav]").forEach((btn) => {
+    const file = files[parseInt(btn.dataset.fav)];
+    btn.onclick = async () => {
+      await api("/api/dataroom/favorite", { method: "POST",
+        body: JSON.stringify({ path: file.path, favorite: !file.favorite }) });
+      loadDataroom();
+    };
+  });
+  holder.querySelectorAll("[data-preview]").forEach((el) => {
+    el.onclick = () => openPreviewModal(files[parseInt(el.dataset.preview)]);
+  });
   holder.querySelectorAll("[data-act]").forEach((btn) => {
     const file = files[parseInt(btn.dataset.i)];
     btn.onclick = () => {
       if (btn.dataset.act === "send") openSendModal(file);
-      if (btn.dataset.act === "note") openNoteModal(file);
       if (btn.dataset.act === "share") openShareModal(file);
-      if (btn.dataset.act === "delete") deleteDataroomFile(file);
+      if (btn.dataset.act === "more") openMoreModal(file);
     };
   });
 }
 
-$("#dataroom-search").oninput = (e) => { dataroomSearch = e.target.value; renderDataroom(); };
+$("#dataroom-search").oninput = (e) => { dr.search = e.target.value; renderDataroom(); };
+$("#dr-sort").onchange = (e) => { dr.sort = e.target.value; renderDataroom(); };
 
-// Yükleme
+// Toplu işlemler
+$("#dr-bulk-clear").onclick = () => { dr.selected.clear(); renderDataroom(); };
+$("#dr-bulk-zip").onclick = async () => {
+  try {
+    const res = await fetch("/api/dataroom/zip", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths: [...dr.selected] }),
+    });
+    if (!res.ok) throw new Error("ZIP oluşturulamadı");
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "dataroom.zip";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast(`${dr.selected.size} dosya ZIP olarak indirildi ✓`);
+  } catch (err) { toast(err.message, true); }
+};
+$("#dr-bulk-delete").onclick = async () => {
+  if (!confirm(`${dr.selected.size} dosya kalıcı olarak silinsin mi?`)) return;
+  const data = await api("/api/dataroom/bulk-delete", {
+    method: "POST", body: JSON.stringify({ paths: [...dr.selected] }),
+  });
+  toast(`${data.deleted} dosya silindi`);
+  dr.selected.clear();
+  loadDataroom();
+};
+
+// Yükleme (bulunduğun klasöre)
 $("#upload-btn").onclick = () => $("#upload-input").click();
 $("#upload-input").onchange = async () => {
   const input = $("#upload-input");
   if (!input.files.length) return;
   const fd = new FormData();
   for (const f of input.files) fd.append("files", f);
+  if (dr.folder) fd.append("folder", dr.folder);
   const btn = $("#upload-btn");
-  btn.disabled = true;
-  btn.textContent = "⬆ Yükleniyor...";
+  btn.disabled = true; btn.textContent = "⬆ Yükleniyor...";
   try {
     const res = await fetch("/api/dataroom/upload", { method: "POST", body: fd });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `Hata: ${res.status}`);
     toast(`${data.files.length} dosya yüklendi ✓`);
     loadDataroom();
-  } catch (err) {
-    toast(err.message, true);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "⬆ Dosya Yükle";
-    input.value = "";
-  }
+  } catch (err) { toast(err.message, true); }
+  finally { btn.disabled = false; btn.textContent = "⬆ Yükle"; input.value = ""; }
 };
+
+// Yeni klasör
+$("#dr-new-folder").onclick = () => {
+  openModal(`
+    <h3>📁 Yeni Klasör</h3>
+    <div class="modal-sub">${dr.folder ? `Şurada: ${esc(dr.folder)}` : "Kök dizinde"}</div>
+    <div class="form-col"><input id="nf-name" placeholder="Klasör adı"></div>
+    <div class="modal-actions">
+      <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
+      <button class="pill accent" id="nf-save">Oluştur</button>
+    </div>`);
+  $("#nf-name").focus();
+  $("#nf-save").onclick = async () => {
+    const name = $("#nf-name").value.trim();
+    if (!name) return toast("Klasör adı gerekli", true);
+    const full = dr.folder ? `${dr.folder}/${name}` : name;
+    await api("/api/dataroom/folder", { method: "POST", body: JSON.stringify({ folder: full }) });
+    toast("Klasör oluşturuldu ✓");
+    closeModal();
+    loadDataroom();
+  };
+};
+
+// Önizleme
+function openPreviewModal(file) {
+  const t = drTypeOf(file.filename);
+  const url = `/api/dataroom/view?path=${encodeURIComponent(file.path)}`;
+  const ext = (file.filename.split(".").pop() || "").toLowerCase();
+  const previewable = t === "pdf" || t === "image" || ["txt", "csv", "md", "html"].includes(ext);
+  openModal(`
+    <div style="max-width:none">
+    <h3>👁 ${esc(file.filename)}</h3>
+    <div class="modal-sub">${formatSize(file.size)} · ${esc(file.folder === "." ? "kök" : file.folder)}</div>
+    ${previewable
+      ? `<iframe id="preview-frame" src="${url}"></iframe>`
+      : `<p class="hint">Bu dosya türü tarayıcıda önizlenemiyor — indirerek açabilirsiniz.</p>`}
+    <div class="modal-actions">
+      <a class="pill ghost" href="/api/dataroom/download?path=${encodeURIComponent(file.path)}">⬇ İndir</a>
+      <button class="pill accent" onclick="closeModal()">Kapat</button>
+    </div></div>`);
+  $("#modal").classList.add("modal-wide");
+}
+
+// ⋯ menüsü
+function openMoreModal(file) {
+  openModal(`
+    <h3>${esc(file.filename)}</h3>
+    <div class="modal-sub">${esc(file.folder === "." ? "kök" : file.folder)} · ${formatSize(file.size)}</div>
+    <div class="modal-list">
+      <button class="pill ghost" id="mm-preview">👁 Önizle</button>
+      <button class="pill ghost" id="mm-note">📝 Not / Etiket</button>
+      <button class="pill ghost" id="mm-move">📂 Klasöre Taşı</button>
+      <button class="pill danger-ghost" id="mm-delete">🗑 Sil</button>
+    </div>`);
+  $("#mm-preview").onclick = () => openPreviewModal(file);
+  $("#mm-note").onclick = () => openNoteModal(file);
+  $("#mm-move").onclick = () => openMoveModal(file);
+  $("#mm-delete").onclick = () => { closeModal(); deleteDataroomFile(file); };
+}
 
 async function deleteDataroomFile(file) {
   if (!confirm(`"${file.filename}" kalıcı olarak silinsin mi?`)) return;
@@ -466,69 +736,110 @@ async function deleteDataroomFile(file) {
     await api(`/api/dataroom/file?path=${encodeURIComponent(file.path)}`, { method: "DELETE" });
     toast("Dosya silindi");
     loadDataroom();
-  } catch (err) {
-    toast(err.message, true);
-  }
+  } catch (err) { toast(err.message, true); }
 }
 
 function openNoteModal(file) {
   openModal(`
-    <h3>📝 Not — ${esc(file.filename)}</h3>
+    <h3>📝 Not & Etiketler — ${esc(file.filename)}</h3>
     <div class="modal-sub">${esc(file.folder === "." ? "" : file.folder)}</div>
-    <textarea id="note-text" placeholder="Bu belge hakkında notunuz...">${esc(file.note || "")}</textarea>
+    <div class="form-col">
+      <textarea id="note-text" placeholder="Bu belge hakkında notunuz...">${esc(file.note || "")}</textarea>
+      <input id="tags-text" placeholder="Etiketler — virgülle ayırın (ör: sözleşme, 2026, acil)" value="${esc((file.tags || []).join(", "))}">
+    </div>
     <div class="modal-actions">
       <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
       <button class="pill accent" id="note-save">Kaydet</button>
     </div>`);
   $("#note-save").onclick = async () => {
     try {
-      await api("/api/dataroom/note", {
-        method: "POST",
-        body: JSON.stringify({ path: file.path, note: $("#note-text").value }),
-      });
-      toast("Not kaydedildi ✓");
+      await api("/api/dataroom/note", { method: "POST",
+        body: JSON.stringify({ path: file.path, note: $("#note-text").value, tags: $("#tags-text").value }) });
+      toast("Kaydedildi ✓");
       closeModal();
       loadDataroom();
-    } catch (err) {
-      toast(err.message, true);
-    }
+    } catch (err) { toast(err.message, true); }
+  };
+}
+
+function openMoveModal(file) {
+  const options = [`<option value="">(Kök dizin)</option>`]
+    .concat(dr.folders.map((f) => `<option value="${esc(f)}" ${f === file.folder ? "selected" : ""}>${esc(f)}</option>`));
+  openModal(`
+    <h3>📂 Taşı — ${esc(file.filename)}</h3>
+    <div class="form-col">
+      <select id="move-target">${options.join("")}</select>
+      <input id="move-new" placeholder="...veya yeni klasör adı yazın">
+    </div>
+    <div class="modal-actions">
+      <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
+      <button class="pill accent" id="move-save">Taşı</button>
+    </div>`);
+  $("#move-save").onclick = async () => {
+    const folder = $("#move-new").value.trim() || $("#move-target").value;
+    try {
+      await api("/api/dataroom/move", { method: "POST",
+        body: JSON.stringify({ path: file.path, folder }) });
+      toast("Dosya taşındı ✓");
+      closeModal();
+      loadDataroom();
+    } catch (err) { toast(err.message, true); }
   };
 }
 
 async function openShareModal(file) {
-  try {
-    const data = await api("/api/dataroom/share", {
-      method: "POST",
-      body: JSON.stringify({ path: file.path }),
-    });
-    const url = window.location.origin + data.url;
-    openModal(`
-      <h3>🔗 Paylaşım Linki</h3>
-      <div class="modal-sub">${esc(file.filename)} — bu linki bilen herkes dosyayı indirebilir.</div>
-      <div class="share-url"><code id="share-url-text">${esc(url)}</code></div>
-      <div class="modal-actions">
-        <button class="pill danger-ghost" id="share-revoke">Linki İptal Et</button>
-        <button class="pill ghost" onclick="closeModal()">Kapat</button>
-        <button class="pill accent" id="share-copy">📋 Kopyala</button>
-      </div>`);
-    $("#share-copy").onclick = async () => {
-      try {
-        await navigator.clipboard.writeText(url);
-        toast("Link kopyalandı ✓");
-      } catch {
-        toast("Kopyalanamadı — linki elle seçin", true);
-      }
-    };
-    $("#share-revoke").onclick = async () => {
-      await api(`/api/dataroom/share?path=${encodeURIComponent(file.path)}`, { method: "DELETE" });
-      toast("Paylaşım linki iptal edildi");
-      closeModal();
-      loadDataroom();
-    };
+  if (file.share_token) return showShareInfo(file.path, await createShare(file.path, 0));
+  openModal(`
+    <h3>🔗 Paylaşım Linki Oluştur</h3>
+    <div class="modal-sub">${esc(file.filename)} — linki bilen herkes dosyayı indirebilir.</div>
+    <div class="form-col">
+      <select id="share-expiry">
+        <option value="0">Süresiz</option>
+        <option value="1">1 gün geçerli</option>
+        <option value="7" selected>7 gün geçerli</option>
+        <option value="30">30 gün geçerli</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
+      <button class="pill accent" id="share-create">Link Oluştur</button>
+    </div>`);
+  $("#share-create").onclick = async () => {
+    const data = await createShare(file.path, parseInt($("#share-expiry").value));
+    showShareInfo(file.path, data);
     loadDataroom();
-  } catch (err) {
-    toast(err.message, true);
-  }
+  };
+}
+
+async function createShare(path, expiresDays) {
+  return api("/api/dataroom/share", { method: "POST",
+    body: JSON.stringify({ path, expires_days: expiresDays }) });
+}
+
+function showShareInfo(path, data) {
+  const url = window.location.origin + data.url;
+  const expiry = data.expires
+    ? `⏳ Son geçerlilik: ${new Date(data.expires).toLocaleString("tr-TR")}`
+    : "♾ Süresiz";
+  openModal(`
+    <h3>🔗 Paylaşım Linki</h3>
+    <div class="modal-sub">${expiry} · 👤 ${data.downloads || 0} indirme</div>
+    <div class="share-url"><code>${esc(url)}</code></div>
+    <div class="modal-actions">
+      <button class="pill danger-ghost" id="share-revoke">Linki İptal Et</button>
+      <button class="pill ghost" onclick="closeModal()">Kapat</button>
+      <button class="pill accent" id="share-copy">📋 Kopyala</button>
+    </div>`);
+  $("#share-copy").onclick = async () => {
+    try { await navigator.clipboard.writeText(url); toast("Link kopyalandı ✓"); }
+    catch { toast("Kopyalanamadı — linki elle seçin", true); }
+  };
+  $("#share-revoke").onclick = async () => {
+    await api(`/api/dataroom/share?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+    toast("Paylaşım linki iptal edildi");
+    closeModal();
+    loadDataroom();
+  };
 }
 
 function openSendModal(file) {
@@ -555,25 +866,21 @@ function openSendModal(file) {
     const to = $("#send-to").value.trim();
     if (!to) return toast("Alıcı adresi gerekli", true);
     const btn = $("#send-file-btn");
-    btn.disabled = true;
-    btn.textContent = "Gönderiliyor...";
+    btn.disabled = true; btn.textContent = "Gönderiliyor...";
     try {
-      await api("/api/dataroom/send", {
-        method: "POST",
+      await api("/api/dataroom/send", { method: "POST",
         body: JSON.stringify({
-          path: file.path,
-          to,
+          path: file.path, to,
           subject: $("#send-subject").value,
           message: $("#send-message").value,
           account_id: parseInt($("#send-account").value),
-        }),
-      });
+        }) });
       toast(`"${file.filename}" ${to} adresine gönderildi ✓`);
       closeModal();
+      loadDataroom();
     } catch (err) {
       toast(err.message, true);
-      btn.disabled = false;
-      btn.textContent = "➤ Gönder";
+      btn.disabled = false; btn.textContent = "➤ Gönder";
     }
   };
 }
@@ -911,10 +1218,14 @@ $("#cal-src-add").onclick = async () => {
 // ---- Başlangıç ----
 
 (async function init() {
+  const EXPECTED_API_VERSION = 6;
   try {
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);
+    if (status.api_version !== EXPECTED_API_VERSION) {
+      toast(RESTART_MSG, true);
+    }
     state.accounts = accounts.accounts;
     state.calendars = cals.calendars;
     if (!status.ai_configured) {
