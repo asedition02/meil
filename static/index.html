@@ -52,9 +52,13 @@
       <section id="list-panel">
         <div class="panel-header">
           <div class="panel-title-row">
-            <h2>Gelen Kutusu</h2>
-            <select id="account-filter" class="pill-select" title="Hesap"></select>
+            <h2 id="view-title">Gelen Kutusu</h2>
+            <div style="display:flex; gap:6px; align-items:center">
+              <select id="account-filter" class="pill-select" title="Hesap"></select>
+              <button class="pill accent" id="compose-btn" title="Yeni mail yaz (c)">✎ Yeni</button>
+            </div>
           </div>
+          <div id="view-tabs" class="view-tabs"></div>
           <div id="category-chips" class="chips"></div>
         </div>
         <div id="email-list"></div>

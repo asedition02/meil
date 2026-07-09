@@ -213,14 +213,110 @@ def sync_emails(account_id: int | None = None):
 
 # ---- Mailler ----
 
+class FlagRequest(BaseModel):
+    value: bool
+
+
+class SnoozeRequest(BaseModel):
+    until: str = ""           # ISO tarih-saat; boş = ertelemeyi kaldır
+
+
+class ComposeRequest(BaseModel):
+    account_id: int
+    to: str
+    cc: str = ""
+    subject: str = ""
+    body: str
+    email_id: int | None = None   # yanıt olarak gönderiliyorsa
+
+
+class ComposeDraftRequest(BaseModel):
+    instruction: str
+    to: str = ""
+    subject: str = ""
+
+
 @app.get("/api/emails")
 def list_emails(category: str | None = None, status: str | None = None,
-                account_id: int | None = None):
+                account_id: int | None = None, view: str = "inbox"):
     return {
-        "emails": database.list_emails(category=category, status=status, account_id=account_id),
+        "emails": database.list_emails(category=category, status=status,
+                                       account_id=account_id, view=view),
         "counts": database.category_counts(account_id=account_id),
+        "views": database.view_counts(account_id=account_id),
         "categories": ai.CATEGORIES,
     }
+
+
+@app.post("/api/emails/{email_id}/read")
+def mark_read(email_id: int, req: FlagRequest):
+    if not database.get_email(email_id):
+        raise HTTPException(status_code=404, detail="Mail bulunamadı")
+    database.update_email(email_id, is_read=1 if req.value else 0)
+    return {"ok": True}
+
+
+@app.post("/api/emails/{email_id}/star")
+def mark_starred(email_id: int, req: FlagRequest):
+    if not database.get_email(email_id):
+        raise HTTPException(status_code=404, detail="Mail bulunamadı")
+    database.update_email(email_id, starred=1 if req.value else 0)
+    return {"ok": True}
+
+
+@app.post("/api/emails/{email_id}/snooze")
+def snooze_email(email_id: int, req: SnoozeRequest):
+    if not database.get_email(email_id):
+        raise HTTPException(status_code=404, detail="Mail bulunamadı")
+    if req.until:
+        try:
+            dt.datetime.fromisoformat(req.until)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Geçersiz tarih")
+    database.update_email(email_id, snooze_until=req.until or None)
+    return {"ok": True}
+
+
+@app.post("/api/emails/{email_id}/unarchive")
+def unarchive_email(email_id: int):
+    if not database.get_email(email_id):
+        raise HTTPException(status_code=404, detail="Mail bulunamadı")
+    database.update_email(email_id, status="new")
+    return {"ok": True}
+
+
+@app.post("/api/compose")
+def compose_send(req: ComposeRequest):
+    """Sıfırdan yeni mail gönderir."""
+    account = database.get_account(req.account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Hesap bulunamadı")
+    if not req.to.strip() or "@" not in req.to:
+        raise HTTPException(status_code=400, detail="Geçerli bir alıcı adresi girin")
+    if not req.body.strip():
+        raise HTTPException(status_code=400, detail="Mail metni boş olamaz")
+    try:
+        email_client.send_message(
+            account, req.to.strip(), req.subject.strip() or "(konu yok)",
+            req.body, cc=req.cc,
+        )
+    except (email_client.EmailConfigError, email_client.EmailAuthError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Gönderim başarısız: {e}")
+    return {"ok": True}
+
+
+@app.post("/api/compose/draft")
+def compose_draft(req: ComposeDraftRequest):
+    """Talimattan AI ile mail taslağı üretir."""
+    if not req.instruction.strip():
+        raise HTTPException(status_code=400, detail="Ne yazılacağını kısaca anlatın")
+    try:
+        draft = ai.compose_email(req.instruction, req.to, req.subject, config.USER_NAME)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Taslak üretilemedi: {e}")
+    return draft
 
 
 @app.get("/api/emails/{email_id}")
@@ -228,6 +324,9 @@ def get_email(email_id: int):
     email_data = database.get_email(email_id)
     if not email_data:
         raise HTTPException(status_code=404, detail="Mail bulunamadı")
+    if not email_data["is_read"]:
+        database.update_email(email_id, is_read=1)  # açılınca okundu say
+        email_data["is_read"] = True
     return email_data
 
 
@@ -634,10 +733,15 @@ def dataroom_send(req: SendFileRequest):
     return {"ok": True}
 
 
+# Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
+API_VERSION = 7
+
+
 @app.get("/api/status")
 def status():
     accounts = database.list_accounts()
     return {
+        "api_version": API_VERSION,
         "accounts": len(accounts),
         "ai_configured": bool(config.ANTHROPIC_API_KEY),
         "model": config.CLAUDE_MODEL,

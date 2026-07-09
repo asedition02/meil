@@ -2,7 +2,7 @@
 
 Microsoft Teams görünümlü arayüzüyle **birden fazla mail hesabına** (Gmail, Outlook / Microsoft 365, Yahoo, Yandex veya şirket IMAP sunucusu) bağlanır ve:
 
-1. **Tasnif eder** — Gelen mailleri Claude ile kategorilere ayırır (Önemli, İş, Kişisel, Fatura/Finans, Bülten, Tanıtım/Reklam, Spam, Diğer) ve öncelik atar.
+1. **Tasnif eder** — Gelen mailleri Claude ile kategorilere ayırır (Önemli, İş, Kişisel, Fatura/Finans, Bülten, Tanıtım/Reklam, Spam, Diğer) ve öncelik atar. Modern posta deneyimi: okundu/okunmadı takibi, yıldızlama, erteleme (snooze), görünüm sekmeleri (Gelen · Yıldızlı · Yanıt Bekleyen · Ertelenen · Arşiv), sıfırdan mail yazma (✎ Yeni, "✨ AI ile Yaz" destekli, CC'li), klavye kısayolları (j/k gezin, e arşivle, s yıldızla, r yanıtla, c yeni mail) ve 5 dakikada bir otomatik eşitleme.
 2. **Okur ve özetler** — Her mail için 1-3 cümlelik Türkçe özet çıkarır.
 3. **Yanıt önerir** — Yanıt gerektiren mailler için gönderilmeye hazır taslak yazar. Taslağı düzenleyebilir, "Yeniden Öner" ile talimat verebilir ve **sizin onayınızla** gönderirsiniz. Onaysız hiçbir mail gönderilmez.
 4. **Dataroom** — Mail ekleri otomatik saklanır; aynı zamanda tam donanımlı bir sanal veri odası: klasör ağacı ve taşıma, belge önizleme (PDF/görsel), not + etiket + favori, süreli paylaşım linkleri (indirme sayaçlı, iptal edilebilir), belgeyi doğrudan mail atma, toplu ZIP indirme/silme ve tüm işlemlerin kaydedildiği etkinlik günlüğü (audit trail).

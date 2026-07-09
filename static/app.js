@@ -12,6 +12,8 @@ let state = {
   selectedId: null,
   activeCategory: "",
   activeAccount: "",
+  activeView: "inbox",
+  views: {},
   search: "",
   cal: {
     year: new Date().getFullYear(),
@@ -50,11 +52,16 @@ function toast(msg, isError = false) {
   setTimeout(() => (el.className = ""), 4500);
 }
 
+const RESTART_MSG =
+  "Sunucu eski sürümde çalışıyor — uvicorn'u durdurup yeniden başlatın " +
+  "(veya ./start.sh kullanın).";
+
 async function api(path, options = {}) {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
+  if (res.status === 405) throw new Error(RESTART_MSG);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || `Hata: ${res.status}`);
   return data;
@@ -136,16 +143,59 @@ document.querySelectorAll(".rail-btn").forEach((btn) => {
 
 // ---- Posta ----
 
+const VIEW_LABELS = {
+  inbox: ["📥", "Gelen"], starred: ["⭐", "Yıldızlı"], awaiting: ["⏳", "Bekleyen"],
+  snoozed: ["😴", "Ertelenen"], archived: ["🗂", "Arşiv"],
+};
+const VIEW_TITLES = {
+  inbox: "Gelen Kutusu", starred: "Yıldızlı", awaiting: "Yanıt Bekleyen",
+  snoozed: "Ertelenen", archived: "Arşiv",
+};
+
 async function loadEmails() {
   const params = new URLSearchParams();
   if (state.activeCategory) params.set("category", state.activeCategory);
   if (state.activeAccount) params.set("account_id", state.activeAccount);
+  params.set("view", state.activeView || "inbox");
   const data = await api(`/api/emails?${params}`);
   state.emails = data.emails;
   state.counts = data.counts;
+  state.views = data.views || {};
   state.categories = data.categories;
+  renderViewTabs();
   renderFilters();
   renderList();
+  renderUnreadBadge();
+}
+
+function renderViewTabs() {
+  const holder = $("#view-tabs");
+  const active = state.activeView || "inbox";
+  $("#view-title").textContent = VIEW_TITLES[active];
+  holder.innerHTML = Object.entries(VIEW_LABELS).map(([view, [icon, label]]) => {
+    const n = state.views[view] || 0;
+    return `<button class="view-tab${view === active ? " active" : ""}" data-vt="${view}" title="${VIEW_TITLES[view]}">
+      ${icon} ${label}${n ? ` <span class="vn">${n}</span>` : ""}
+    </button>`;
+  }).join("");
+  holder.querySelectorAll(".view-tab").forEach((tab) => {
+    tab.onclick = () => { state.activeView = tab.dataset.vt; loadEmails(); };
+  });
+}
+
+function renderUnreadBadge() {
+  const railBtn = document.querySelector('.rail-btn[data-view="inbox"] .rail-tile');
+  if (!railBtn) return;
+  let badge = railBtn.querySelector(".rail-badge");
+  const n = state.views.unread || 0;
+  if (!n) { if (badge) badge.remove(); return; }
+  if (!badge) {
+    badge = document.createElement("span");
+    badge.className = "rail-badge";
+    railBtn.style.position = "relative";
+    railBtn.appendChild(badge);
+  }
+  badge.textContent = n > 99 ? "99+" : n;
 }
 
 function renderFilters() {
@@ -198,34 +248,62 @@ function renderList() {
       const replied = e.status === "replied" ? `<span class="badge replied">✓ yanıtlandı</span>` : "";
       const att = e.attachments.length ? `<span class="badge">📎 ${e.attachments.length}</span>` : "";
       const acct = showAcct && e.account_email ? `<span class="badge acct">${esc(e.account_name || e.account_email)}</span>` : "";
+      const unread = !e.is_read ? " unread" : "";
+      const snoozed = state.activeView === "snoozed" && e.snooze_until
+        ? `<span class="badge">😴 ${formatDateFull(e.snooze_until)}</span>` : "";
       return `
-      <div class="email-item${active}" data-id="${e.id}">
+      <div class="email-item${active}${unread}" data-id="${e.id}">
+        ${!e.is_read ? '<span class="unread-dot"></span>' : ""}
         ${avatarHtml(e.sender_name, e.sender_email)}
         <div class="item-body">
           <div class="row1">
             <span class="from">${esc(e.sender_name || e.sender_email)}</span>
-            <span class="time">${formatDate(e.date)}</span>
+            <span style="display:flex;align-items:center">
+              <span class="time">${formatDate(e.date)}</span>
+              <button class="star-btn${e.starred ? " on" : ""}" data-star="${e.id}" title="Yıldızla (s)">⭐</button>
+            </span>
           </div>
           <div class="subject">${esc(e.subject)}</div>
           <div class="summary">${esc(e.summary || "")}</div>
           <div class="meta">
             <span class="badge cat">${esc(e.category || "")}</span>
             <span class="badge p-${esc(e.priority || "orta")}">${esc(e.priority || "")}</span>
-            ${att}${acct}${replied}
+            ${att}${acct}${replied}${snoozed}
           </div>
         </div>
       </div>`;
     })
     .join("");
   document.querySelectorAll(".email-item").forEach((item) => {
-    item.onclick = () => selectEmail(parseInt(item.dataset.id));
+    item.onclick = (ev) => {
+      if (ev.target.closest(".star-btn")) return;
+      selectEmail(parseInt(item.dataset.id));
+    };
   });
+  document.querySelectorAll(".star-btn[data-star]").forEach((btn) => {
+    btn.onclick = () => toggleStar(parseInt(btn.dataset.star));
+  });
+}
+
+async function toggleStar(id) {
+  const email = state.emails.find((e) => e.id === id);
+  if (!email) return;
+  await api(`/api/emails/${id}/star`, { method: "POST",
+    body: JSON.stringify({ value: !email.starred }) });
+  email.starred = !email.starred;
+  renderList();
 }
 
 async function selectEmail(id) {
   state.selectedId = id;
-  renderList();
   const e = await api(`/api/emails/${id}`);
+  const local = state.emails.find((x) => x.id === id);
+  if (local && !local.is_read) {
+    local.is_read = true;
+    state.views.unread = Math.max(0, (state.views.unread || 1) - 1);
+    renderUnreadBadge();
+  }
+  renderList();
   renderDetail(e);
 }
 
@@ -259,7 +337,7 @@ function renderDetail(e) {
   $("#detail-panel").innerHTML = `
     <div class="detail-header">
       ${avatarHtml(e.sender_name, e.sender_email, "large")}
-      <div>
+      <div style="flex:1; min-width:0">
         <div class="detail-subject">${esc(e.subject)}</div>
         <div class="detail-meta">
           <span>${esc(e.sender_name || "")} &lt;${esc(e.sender_email)}&gt;</span>
@@ -268,6 +346,12 @@ function renderDetail(e) {
           <span class="badge p-${esc(e.priority || "orta")}">${esc(e.priority || "")} öncelik</span>
           ${acctInfo}
         </div>
+      </div>
+      <div class="detail-toolbar">
+        <button class="icon-btn" id="d-star" title="Yıldızla">${e.starred ? "⭐" : "☆"}</button>
+        <button class="icon-btn" id="d-snooze" title="Ertele">😴</button>
+        <button class="icon-btn" id="d-unread" title="Okunmadı işaretle">📪</button>
+        <button class="icon-btn" id="d-archive" title="${e.status === "archived" ? "Gelen kutusuna taşı" : "Arşivle"}">${e.status === "archived" ? "📥" : "🗂"}</button>
       </div>
     </div>
     <div class="card summary-card"><h3>✨ Özet</h3><p>${esc(e.summary || "")}</p></div>
@@ -328,6 +412,28 @@ function renderDetail(e) {
     loadEmails();
   };
 
+  $("#d-star").onclick = async () => {
+    await api(`/api/emails/${e.id}/star`, { method: "POST",
+      body: JSON.stringify({ value: !e.starred }) });
+    e.starred = !e.starred;
+    $("#d-star").textContent = e.starred ? "⭐" : "☆";
+    loadEmails();
+  };
+  $("#d-unread").onclick = async () => {
+    await api(`/api/emails/${e.id}/read`, { method: "POST",
+      body: JSON.stringify({ value: false }) });
+    toast("Okunmadı olarak işaretlendi");
+    state.selectedId = null;
+    loadEmails();
+  };
+  $("#d-archive").onclick = async () => {
+    const action = e.status === "archived" ? "unarchive" : "archive";
+    await api(`/api/emails/${e.id}/${action}`, { method: "POST" });
+    toast(action === "archive" ? "Arşivlendi" : "Gelen kutusuna taşındı");
+    loadEmails();
+  };
+  $("#d-snooze").onclick = () => openSnoozeModal(e);
+
   const addEventBtn = $("#add-event-btn");
   if (addEventBtn) {
     addEventBtn.onclick = async () => {
@@ -346,6 +452,161 @@ function renderDetail(e) {
     };
   }
 }
+
+// ---- Erteleme (snooze) ----
+
+function snoozePresets() {
+  const now = new Date();
+  const at = (d, h) => { const x = new Date(d); x.setHours(h, 0, 0, 0); return x; };
+  const today18 = at(now, 18);
+  const tomorrow = at(new Date(now.getTime() + 86400000), 9);
+  const in3days = at(new Date(now.getTime() + 3 * 86400000), 9);
+  const nextMonday = new Date(now);
+  nextMonday.setDate(now.getDate() + ((8 - now.getDay()) % 7 || 7));
+  return [
+    ["Bu akşam 18:00", today18 > now ? today18 : null],
+    ["Yarın 09:00", tomorrow],
+    ["3 gün sonra", in3days],
+    ["Pazartesi 09:00", at(nextMonday, 9)],
+  ].filter(([, d]) => d);
+}
+
+function isoLocal(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function openSnoozeModal(e) {
+  const presets = snoozePresets();
+  openModal(`
+    <h3>😴 Ertele — ${esc(e.subject)}</h3>
+    <div class="modal-sub">Mail seçilen zamana kadar gelen kutusundan gizlenir; "Ertelenen" sekmesinde durur.</div>
+    <div class="modal-list">
+      ${presets.map(([label, d], i) => `<button class="pill ghost" data-snooze="${isoLocal(d)}">${label} <span style="color:var(--muted)">· ${d.toLocaleDateString("tr-TR", { day: "2-digit", month: "short" })}</span></button>`).join("")}
+      ${e.snooze_until ? `<button class="pill danger-ghost" data-snooze="">Ertelemeyi kaldır</button>` : ""}
+    </div>
+    <div class="form-col" style="margin-top:10px">
+      <input id="snooze-custom" type="datetime-local">
+    </div>
+    <div class="modal-actions">
+      <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
+      <button class="pill accent" id="snooze-custom-btn">Seçilen Tarihe Ertele</button>
+    </div>`);
+  const doSnooze = async (until) => {
+    await api(`/api/emails/${e.id}/snooze`, { method: "POST",
+      body: JSON.stringify({ until }) });
+    toast(until ? "Mail ertelendi 😴" : "Erteleme kaldırıldı");
+    closeModal();
+    state.selectedId = null;
+    loadEmails();
+  };
+  document.querySelectorAll("[data-snooze]").forEach((btn) => {
+    btn.onclick = () => doSnooze(btn.dataset.snooze);
+  });
+  $("#snooze-custom-btn").onclick = () => {
+    const v = $("#snooze-custom").value;
+    if (!v) return toast("Tarih seçin", true);
+    doSnooze(v);
+  };
+}
+
+// ---- Yeni mail (compose) ----
+
+function openComposeModal(prefill = {}) {
+  if (!state.accounts.length) {
+    return toast("Önce Hesaplar sekmesinden bir mail hesabı ekleyin", true);
+  }
+  const accountOptions = state.accounts
+    .map((a) => `<option value="${a.id}">${esc(a.display_name || a.email)}</option>`)
+    .join("");
+  openModal(`
+    <h3>✎ Yeni Mail</h3>
+    <div class="form-col">
+      <select id="c-account">${accountOptions}</select>
+      <input id="c-to" type="email" placeholder="Alıcı" value="${esc(prefill.to || "")}">
+      <input id="c-cc" placeholder="CC (isteğe bağlı, virgülle ayırın)">
+      <input id="c-subject" placeholder="Konu" value="${esc(prefill.subject || "")}">
+      <textarea id="c-body" style="min-height:180px" placeholder="Mesajınız...">${esc(prefill.body || "")}</textarea>
+      <div class="form-row">
+        <input id="c-ai" placeholder="✨ AI'ya anlatın: 'yarınki toplantıyı iptal et, kibarca'">
+        <button class="pill ghost" id="c-ai-btn" style="flex:0 0 auto">✨ AI ile Yaz</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
+      <button class="pill accent" id="c-send">➤ Gönder</button>
+    </div>`);
+  $("#c-ai-btn").onclick = async () => {
+    const instruction = $("#c-ai").value.trim();
+    if (!instruction) return toast("AI'ya ne yazacağını kısaca anlatın", true);
+    const btn = $("#c-ai-btn");
+    btn.disabled = true; btn.textContent = "Yazılıyor...";
+    try {
+      const draft = await api("/api/compose/draft", { method: "POST",
+        body: JSON.stringify({ instruction, to: $("#c-to").value, subject: $("#c-subject").value }) });
+      $("#c-body").value = draft.body;
+      if (!$("#c-subject").value) $("#c-subject").value = draft.subject;
+      toast("Taslak hazır — düzenleyip gönderebilirsiniz");
+    } catch (err) { toast(err.message, true); }
+    finally { btn.disabled = false; btn.textContent = "✨ AI ile Yaz"; }
+  };
+  $("#c-send").onclick = async () => {
+    const btn = $("#c-send");
+    btn.disabled = true; btn.textContent = "Gönderiliyor...";
+    try {
+      await api("/api/compose", { method: "POST",
+        body: JSON.stringify({
+          account_id: parseInt($("#c-account").value),
+          to: $("#c-to").value.trim(),
+          cc: $("#c-cc").value.trim(),
+          subject: $("#c-subject").value.trim(),
+          body: $("#c-body").value,
+        }) });
+      toast("Mail gönderildi ✓");
+      closeModal();
+    } catch (err) {
+      toast(err.message, true);
+      btn.disabled = false; btn.textContent = "➤ Gönder";
+    }
+  };
+}
+
+$("#compose-btn").onclick = () => openComposeModal();
+
+// ---- Klavye kısayolları (j/k gezin, e arşivle, s yıldızla, r yanıtla, c yeni) ----
+
+document.addEventListener("keydown", (ev) => {
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
+  if ($("#modal-overlay").style.display === "flex") return;
+  if ($("#view-inbox").style.display === "none") return;
+  const emails = visibleEmails();
+  const idx = emails.findIndex((e) => e.id === state.selectedId);
+  if (ev.key === "j" || ev.key === "k") {
+    ev.preventDefault();
+    const next = ev.key === "j" ? Math.min(idx + 1, emails.length - 1) : Math.max(idx - 1, 0);
+    if (emails[next]) selectEmail(emails[next].id);
+  } else if (ev.key === "c") {
+    ev.preventDefault();
+    openComposeModal();
+  } else if (state.selectedId) {
+    if (ev.key === "s") { ev.preventDefault(); toggleStar(state.selectedId); }
+    if (ev.key === "e") { ev.preventDefault(); const b = $("#d-archive"); if (b) b.click(); }
+    if (ev.key === "r") { ev.preventDefault(); const t = $("#reply-text"); if (t) t.focus(); }
+  }
+});
+
+// ---- Otomatik eşitleme (5 dakikada bir, sessiz) ----
+
+setInterval(async () => {
+  if (!state.accounts.length) return;
+  try {
+    const data = await api("/api/sync", { method: "POST" });
+    if (data.new_emails > 0) {
+      toast(`📬 ${data.new_emails} yeni mail geldi`);
+      loadEmails();
+    }
+  } catch { /* sessizce geç */ }
+}, 5 * 60 * 1000);
 
 // ---- Eşitleme ----
 
@@ -1070,11 +1331,15 @@ $("#cal-src-add").onclick = async () => {
 
 (async function init() {
   try {
+    const EXPECTED_API_VERSION = 7;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);
     state.accounts = accounts.accounts;
     state.calendars = cals.calendars;
+    if (status.api_version !== EXPECTED_API_VERSION) {
+      toast(RESTART_MSG, true);
+    }
     if (!status.ai_configured) {
       toast("ANTHROPIC_API_KEY ayarlanmadı — .env dosyasını düzenleyin", true);
     } else if (!status.accounts) {

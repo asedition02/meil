@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS emails (
     status TEXT DEFAULT 'new',          -- new | replied | archived
     attachments TEXT DEFAULT '[]',      -- JSON: [{filename, path, size}]
     event_json TEXT,                    -- AI'nın tespit ettiği etkinlik (JSON)
+    is_read INTEGER DEFAULT 0,
+    starred INTEGER DEFAULT 0,
+    snooze_until TEXT,                  -- ISO tarih-saat; ertelenen mailler
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -137,6 +140,12 @@ def _migrate(db: sqlite3.Connection):
     elif cols and "event_json" not in cols:
         # takvim öncesi şema → event_json sütunu ekle
         db.execute("ALTER TABLE emails ADD COLUMN event_json TEXT")
+    if cols and "is_read" not in cols:
+        # posta v2 öncesi şema → okundu/yıldız/erteleme sütunları
+        db.execute("ALTER TABLE emails ADD COLUMN is_read INTEGER DEFAULT 0")
+        db.execute("ALTER TABLE emails ADD COLUMN starred INTEGER DEFAULT 0")
+        db.execute("ALTER TABLE emails ADD COLUMN snooze_until TEXT")
+        db.execute("UPDATE emails SET is_read = 1")  # mevcut mailler okunmuş sayılsın
     meta_cols = {r["name"] for r in db.execute("PRAGMA table_info(dataroom_meta)").fetchall()}
     if meta_cols and "tags" not in meta_cols:
         # dataroom v2 öncesi şema → yeni sütunlar
@@ -487,11 +496,28 @@ def insert_email(data: dict) -> int:
         return cur.lastrowid
 
 
+def _view_conditions(view: str) -> tuple[list[str], list]:
+    """Görünüm sekmeleri: inbox | starred | awaiting | snoozed | archived."""
+    now = __import__("datetime").datetime.now().isoformat(timespec="minutes")
+    if view == "starred":
+        return ["e.starred = 1", "e.status != 'archived'"], []
+    if view == "awaiting":
+        return ["e.needs_reply = 1", "e.status = 'new'",
+                "(e.snooze_until IS NULL OR e.snooze_until <= ?)"], [now]
+    if view == "snoozed":
+        return ["e.snooze_until > ?", "e.status != 'archived'"], [now]
+    if view == "archived":
+        return ["e.status = 'archived'"], []
+    # inbox (varsayılan): arşivlenmemiş + ertelenmemiş
+    return ["e.status != 'archived'",
+            "(e.snooze_until IS NULL OR e.snooze_until <= ?)"], [now]
+
+
 def list_emails(category: str | None = None, status: str | None = None,
-                account_id: int | None = None) -> list[dict]:
+                account_id: int | None = None, view: str = "inbox") -> list[dict]:
     query = """SELECT e.*, a.email AS account_email, a.display_name AS account_name
                FROM emails e LEFT JOIN accounts a ON a.id = e.account_id"""
-    conditions, params = [], []
+    conditions, params = _view_conditions(view)
     if category:
         conditions.append("e.category = ?")
         params.append(category)
@@ -507,6 +533,29 @@ def list_emails(category: str | None = None, status: str | None = None,
     with get_db() as db:
         rows = db.execute(query, params).fetchall()
         return [_row_to_dict(r) for r in rows]
+
+
+def view_counts(account_id: int | None = None) -> dict:
+    """Her görünüm sekmesi için mail sayısı + okunmamış sayısı."""
+    counts = {}
+    for view in ("inbox", "starred", "awaiting", "snoozed", "archived"):
+        conditions, params = _view_conditions(view)
+        if account_id:
+            conditions.append("e.account_id = ?")
+            params.append(account_id)
+        query = "SELECT COUNT(*) AS n FROM emails e WHERE " + " AND ".join(conditions)
+        with get_db() as db:
+            counts[view] = db.execute(query, params).fetchone()["n"]
+    conditions, params = _view_conditions("inbox")
+    conditions.append("e.is_read = 0")
+    if account_id:
+        conditions.append("e.account_id = ?")
+        params.append(account_id)
+    with get_db() as db:
+        counts["unread"] = db.execute(
+            "SELECT COUNT(*) AS n FROM emails e WHERE " + " AND ".join(conditions), params
+        ).fetchone()["n"]
+    return counts
 
 
 def get_email(email_id: int) -> dict | None:
@@ -548,6 +597,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     d = dict(row)
     d["attachments"] = json.loads(d.get("attachments") or "[]")
     d["needs_reply"] = bool(d.get("needs_reply"))
+    d["is_read"] = bool(d.get("is_read"))
+    d["starred"] = bool(d.get("starred"))
     try:
         d["event"] = json.loads(d["event_json"]) if d.get("event_json") else None
     except Exception:

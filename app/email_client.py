@@ -233,14 +233,17 @@ def send_reply(account: dict, to_address: str, subject: str, body: str,
 
 
 def send_message(account: dict, to_address: str, subject: str, body: str,
-                 attachments: list[tuple[str, bytes]] | None = None):
-    """Yeni bir mail gönderir; isteğe bağlı ekli dosyalarla (dataroom gönderimi)."""
+                 attachments: list[tuple[str, bytes]] | None = None,
+                 cc: str = ""):
+    """Yeni bir mail gönderir; isteğe bağlı CC ve ekli dosyalarla."""
     import mimetypes
 
     _validate(account)
     msg = EmailMessage()
     msg["From"] = account["email"]
     msg["To"] = to_address
+    if cc.strip():
+        msg["Cc"] = cc.strip()
     msg["Subject"] = subject
     msg.set_content(body)
     for filename, payload in attachments or []:

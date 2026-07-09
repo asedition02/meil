@@ -136,6 +136,53 @@ def triage_email(sender: str, subject: str, date: str, body: str,
     return json.loads(text)
 
 
+COMPOSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "subject": {"type": "string", "description": "Mailin kısa, net konusu."},
+        "body": {
+            "type": "string",
+            "description": "Gönderilmeye hazır mail metni: selamlama ile başlar, kibar kapanışla biter.",
+        },
+    },
+    "required": ["subject", "body"],
+    "additionalProperties": False,
+}
+
+
+def compose_email(instruction: str, to: str = "", subject: str = "",
+                  user_name: str = "") -> dict:
+    """Kullanıcının talimatından yeni bir mail taslağı üretir."""
+    client = _get_client()
+    system = (
+        "Sen bir e-posta asistanısın. Kullanıcının talimatına göre gönderilmeye hazır "
+        "bir mail yazıyorsun.\n"
+        "- Talimat hangi dildeyse maili o dilde yaz (varsayılan Türkçe).\n"
+        "- Selamlama ile başla, kibar bir kapanışla bitir.\n"
+        "- Uydurma bilgi ekleme; emin olamadığın yerlerde [KÖŞELİ PARANTEZ] içinde "
+        "doldurulacak alan bırak."
+    )
+    if user_name:
+        system += f"\n- Kullanıcının adı: {user_name}. Maili bu isimle imzala."
+    prompt = f"Talimat: {instruction}\n"
+    if to:
+        prompt += f"Alıcı: {to}\n"
+    if subject:
+        prompt += f"Konu (kullanıcı belirledi, aynen koru): {subject}\n"
+    response = client.messages.create(
+        model=config.CLAUDE_MODEL,
+        max_tokens=2048,
+        system=system,
+        output_config={"format": {"type": "json_schema", "schema": COMPOSE_SCHEMA}},
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = next(b.text for b in response.content if b.type == "text")
+    result = json.loads(text)
+    if subject:
+        result["subject"] = subject
+    return result
+
+
 def regenerate_reply(sender: str, subject: str, date: str, body: str,
                      instruction: str = "", user_name: str = "") -> str:
     """Kullanıcının ek talimatıyla yeni bir yanıt taslağı üretir."""

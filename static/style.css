@@ -169,6 +169,41 @@ body {
 .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .chip .n { opacity: 0.7; font-weight: 500; margin-left: 3px; }
 
+/* Görünüm sekmeleri (Gelen/Yıldızlı/Bekleyen/Ertelenen/Arşiv) */
+.view-tabs {
+  display: flex; gap: 2px; margin-bottom: 10px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 999px; padding: 3px;
+}
+.view-tab {
+  flex: 1; border: none; background: none; padding: 6px 4px; cursor: pointer;
+  font-size: 11.5px; font-weight: 650; font-family: inherit; color: var(--muted);
+  border-radius: 999px; white-space: nowrap; position: relative;
+}
+.view-tab:hover { color: var(--text); }
+.view-tab.active { background: var(--panel); color: var(--accent-text); box-shadow: var(--shadow); }
+.view-tab .vn { font-weight: 500; opacity: 0.7; font-size: 10.5px; }
+
+/* Okunmamış gösterimi + yıldız */
+.email-item { position: relative; }
+.email-item .unread-dot {
+  width: 8px; height: 8px; border-radius: 99px; background: var(--accent-bright, var(--accent));
+  position: absolute; left: 4px; top: 50%; transform: translateY(-50%);
+}
+.email-item.unread .from, .email-item.unread .subject { font-weight: 800; }
+.star-btn {
+  background: none; border: none; cursor: pointer; font-size: 14px;
+  opacity: 0.3; padding: 0 2px; flex-shrink: 0;
+}
+.star-btn.on { opacity: 1; }
+.star-btn:hover { opacity: 0.8; }
+.rail-badge {
+  position: absolute; top: 2px; right: 12px; background: var(--red); color: #fff;
+  font-size: 10px; font-weight: 700; border-radius: 999px; padding: 1px 6px;
+  min-width: 17px;
+}
+.detail-toolbar { display: flex; gap: 6px; margin-left: auto; flex-shrink: 0; }
+
 #email-list { flex: 1; overflow-y: auto; padding: 4px 10px 12px; }
 .email-item {
   display: flex; gap: 11px; padding: 12px; margin-bottom: 6px;
