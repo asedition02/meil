@@ -678,3 +678,292 @@ table.dataroom input[type="checkbox"] { width: 15px; height: 15px; accent-color:
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ============================================================
+   Dataroom v3 — Swiss/Minimal tasarım sistemi (ui-ux-pro-max)
+   Palet: kurumsal mavi #2563EB + anlaşma yeşili #059669
+   Tipografi: Fira Sans (gövde) + Fira Code (veri/başlık)
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fira+Sans:wght@400;500;600;700&display=swap');
+
+#view-dataroom {
+  --dr-primary: #2563eb;
+  --dr-on-primary: #ffffff;
+  --dr-accent: #059669;
+  --dr-bg: #f8fafc;
+  --dr-fg: #0f172a;
+  --dr-muted-fg: #64748b;
+  --dr-surface: #ffffff;
+  --dr-muted: #f1f5f9;
+  --dr-border: #e2e8f0;
+  --dr-destructive: #dc2626;
+  --dr-destructive-soft: #fef2f2;
+  --dr-primary-soft: #eff6ff;
+  --dr-accent-soft: #ecfdf5;
+  --dr-amber: #b45309;
+  --dr-amber-soft: #fffbeb;
+  --dr-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --dr-radius: 8px;
+  font-family: "Fira Sans", -apple-system, "Segoe UI", sans-serif;
+  gap: 12px;
+  color: var(--dr-fg);
+}
+[data-theme="dark"] #view-dataroom {
+  --dr-primary: #3b82f6;
+  --dr-accent: #10b981;
+  --dr-bg: #0b1220;
+  --dr-fg: #e2e8f0;
+  --dr-muted-fg: #94a3b8;
+  --dr-surface: #101827;
+  --dr-muted: #1e293b;
+  --dr-border: #283548;
+  --dr-destructive: #f87171;
+  --dr-destructive-soft: #2d1a1c;
+  --dr-primary-soft: #172554;
+  --dr-accent-soft: #06281e;
+  --dr-amber: #fbbf24;
+  --dr-amber-soft: #2c2410;
+  --dr-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+#view-dataroom .dr-mono { font-family: "Fira Code", ui-monospace, monospace; font-size: 12px; }
+#view-dataroom .dr-muted { color: var(--dr-muted-fg); }
+#view-dataroom .dr-hint { color: var(--dr-muted-fg); font-size: 12.5px; }
+
+/* ---- Sol panel ---- */
+#dr-side {
+  width: 250px; flex-shrink: 0; overflow-y: auto;
+  background: var(--dr-surface); border: 1px solid var(--dr-border);
+  border-radius: var(--dr-radius); box-shadow: var(--dr-shadow); padding: 16px;
+}
+#view-dataroom .dr-stats {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 20px;
+  background: none; padding: 0; color: inherit; font-weight: 400;
+}
+.dr-stat {
+  border: 1px solid var(--dr-border); border-radius: var(--dr-radius);
+  padding: 10px; display: flex; flex-direction: column; gap: 2px;
+  font-size: 11px; color: var(--dr-muted-fg);
+}
+.dr-stat:first-child { grid-column: span 2; background: var(--dr-primary-soft); border-color: transparent; }
+.dr-stat-n { font-family: "Fira Code", monospace; font-size: 17px; font-weight: 600; color: var(--dr-fg); }
+.dr-stat:first-child .dr-stat-n { color: var(--dr-primary); }
+
+#view-dataroom .dr-side-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+#dr-side h3 {
+  font-family: "Fira Code", monospace; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--dr-muted-fg); font-weight: 600;
+}
+#view-dataroom .dr-activity-title { margin: 22px 0 10px; }
+
+.dr-icon-btn {
+  width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--dr-border);
+  background: var(--dr-surface); color: var(--dr-muted-fg); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+}
+.dr-icon-btn:hover { border-color: var(--dr-primary); color: var(--dr-primary); }
+.dr-icon-btn:focus-visible { outline: 2px solid var(--dr-primary); outline-offset: 1px; }
+.dr-icon-btn.sm { width: 22px; height: 22px; border: none; }
+
+#view-dataroom .dr-folder {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+  border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--dr-fg);
+  white-space: nowrap; overflow: hidden; transition: background 0.2s, color 0.2s;
+  border-left: 2px solid transparent;
+}
+#view-dataroom .dr-folder span { overflow: hidden; text-overflow: ellipsis; }
+#view-dataroom .dr-folder svg { flex-shrink: 0; color: var(--dr-muted-fg); }
+#view-dataroom .dr-folder:hover { background: var(--dr-muted); }
+#view-dataroom .dr-folder.active {
+  background: var(--dr-primary-soft); color: var(--dr-primary);
+  border-left-color: var(--dr-primary); font-weight: 600;
+}
+#view-dataroom .dr-folder.active svg { color: var(--dr-primary); }
+#view-dataroom .dr-folder:focus-visible { outline: 2px solid var(--dr-primary); outline-offset: 1px; }
+
+#view-dataroom .dr-act-row {
+  display: flex; flex-direction: column; gap: 1px; padding: 7px 0;
+  font-size: 12px; border-bottom: 1px solid var(--dr-border);
+}
+#view-dataroom .dr-act-row:last-child { border-bottom: none; }
+#view-dataroom .dr-act-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dr-fg); }
+#view-dataroom .dr-act-text strong { font-weight: 600; }
+#view-dataroom .dr-act-time { color: var(--dr-muted-fg); font-size: 11px; font-family: "Fira Code", monospace; }
+
+/* ---- Ana alan ---- */
+#dr-main {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0;
+  background: var(--dr-surface); border: 1px solid var(--dr-border);
+  border-radius: var(--dr-radius); box-shadow: var(--dr-shadow); padding: 18px 20px;
+}
+#view-dataroom .dr-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+}
+#view-dataroom .dr-breadcrumb {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 16px; font-weight: 700; letter-spacing: -0.2px;
+}
+#view-dataroom .dr-breadcrumb a { color: var(--dr-fg); text-decoration: none; cursor: pointer; }
+#view-dataroom .dr-breadcrumb a:hover { color: var(--dr-primary); }
+#view-dataroom .dr-breadcrumb a:last-child { color: var(--dr-primary); }
+#view-dataroom .dr-breadcrumb .sep { color: var(--dr-muted-fg); font-weight: 400; }
+#view-dataroom .dr-toolbar-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.dr-search {
+  display: flex; align-items: center; gap: 7px; padding: 0 12px; height: 34px;
+  border: 1px solid var(--dr-border); border-radius: 6px; background: var(--dr-muted);
+  color: var(--dr-muted-fg); transition: border-color 0.2s, box-shadow 0.2s; min-width: 220px;
+}
+.dr-search:focus-within { border-color: var(--dr-primary); box-shadow: 0 0 0 3px var(--dr-primary-soft); background: var(--dr-surface); }
+.dr-search input {
+  border: none; outline: none; background: none; flex: 1;
+  font-size: 13px; font-family: inherit; color: var(--dr-fg);
+}
+
+.dr-select {
+  height: 34px; padding: 0 10px; font-size: 12.5px; font-family: inherit;
+  border: 1px solid var(--dr-border); border-radius: 6px;
+  background: var(--dr-surface); color: var(--dr-fg); cursor: pointer;
+}
+.dr-select:focus-visible { outline: 2px solid var(--dr-primary); outline-offset: 1px; }
+
+.dr-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px;
+  font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;
+  border: 1px solid var(--dr-border); border-radius: 6px;
+  background: var(--dr-surface); color: var(--dr-fg);
+  transition: all 0.2s; text-decoration: none;
+}
+.dr-btn:hover { border-color: var(--dr-primary); color: var(--dr-primary); }
+.dr-btn:focus-visible { outline: 2px solid var(--dr-primary); outline-offset: 1px; }
+.dr-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.dr-btn.primary { background: var(--dr-primary); border-color: var(--dr-primary); color: var(--dr-on-primary); }
+.dr-btn.primary:hover { filter: brightness(1.08); color: var(--dr-on-primary); }
+.dr-btn.danger { color: var(--dr-destructive); }
+.dr-btn.danger:hover { background: var(--dr-destructive-soft); border-color: var(--dr-destructive); }
+.dr-btn.ghost { border-color: transparent; color: var(--dr-muted-fg); }
+
+#view-dataroom .dr-chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 10px; scrollbar-width: none; }
+#view-dataroom .dr-chips::-webkit-scrollbar { display: none; }
+.dr-chip {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--dr-border); background: var(--dr-surface); color: var(--dr-muted-fg);
+  border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600;
+  font-family: inherit; cursor: pointer; transition: all 0.2s;
+}
+.dr-chip .n { font-family: "Fira Code", monospace; font-size: 11px; opacity: 0.8; }
+.dr-chip:hover { border-color: var(--dr-primary); color: var(--dr-primary); }
+.dr-chip.active { background: var(--dr-fg); border-color: var(--dr-fg); color: var(--dr-bg); }
+
+#view-dataroom .dr-bulkbar {
+  display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+  background: var(--dr-primary-soft); border: 1px solid var(--dr-primary);
+  border-radius: 6px; margin-bottom: 10px;
+  font-size: 13px; font-weight: 600; color: var(--dr-primary);
+}
+
+#view-dataroom .dr-empty { text-align: center; color: var(--dr-muted-fg); padding: 80px 20px; font-size: 14px; }
+
+/* ---- Tablo ---- */
+#dataroom-list { flex: 1; overflow: auto; }
+.dr-table { width: 100%; border-collapse: collapse; }
+.dr-table th {
+  font-family: "Fira Code", monospace; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--dr-muted-fg); font-weight: 600;
+  text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--dr-border);
+  position: sticky; top: 0; background: var(--dr-surface); z-index: 1;
+}
+.dr-table td { padding: 10px; border-bottom: 1px solid var(--dr-border); font-size: 13.5px; vertical-align: middle; }
+.dr-table tbody tr { cursor: pointer; transition: background 0.15s; }
+.dr-table tbody tr:hover { background: var(--dr-muted); }
+.dr-table tbody tr.active { background: var(--dr-primary-soft); box-shadow: inset 2px 0 0 var(--dr-primary); }
+.dr-table .w-check { width: 34px; }
+.dr-table .w-star { width: 34px; }
+.dr-table .w-num { text-align: right; white-space: nowrap; }
+.dr-table input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--dr-primary); cursor: pointer; }
+
+.dr-star {
+  background: none; border: none; cursor: pointer; padding: 4px;
+  color: var(--dr-muted-fg); opacity: 0.5; transition: all 0.2s; border-radius: 4px;
+}
+.dr-star:hover { opacity: 1; color: var(--dr-amber); }
+.dr-star.on { opacity: 1; color: var(--dr-amber); }
+.dr-star:focus-visible { outline: 2px solid var(--dr-primary); }
+
+.dr-file-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dr-file-icon {
+  width: 32px; height: 32px; border-radius: 6px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.dr-ic-pdf { background: var(--dr-destructive-soft); color: var(--dr-destructive); }
+.dr-ic-sheet { background: var(--dr-accent-soft); color: var(--dr-accent); }
+.dr-ic-doc { background: var(--dr-primary-soft); color: var(--dr-primary); }
+.dr-ic-image { background: var(--dr-amber-soft); color: var(--dr-amber); }
+.dr-ic-other { background: var(--dr-muted); color: var(--dr-muted-fg); }
+
+.dr-file-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dr-file-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dr-file-sub { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 11.5px; }
+.dr-shared { display: inline-flex; align-items: center; gap: 4px; color: var(--dr-accent); font-weight: 600; }
+.dr-tag {
+  background: var(--dr-amber-soft); color: var(--dr-amber);
+  padding: 1px 7px; border-radius: 4px; font-weight: 600;
+  font-family: "Fira Code", monospace; font-size: 10.5px;
+}
+.dr-note-preview { color: var(--dr-muted-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+
+/* ---- Sağ panel (inspector) ---- */
+#dr-inspector {
+  width: 330px; flex-shrink: 0; overflow-y: auto;
+  background: var(--dr-surface); border: 1px solid var(--dr-border);
+  border-radius: var(--dr-radius); box-shadow: var(--dr-shadow); padding: 18px;
+  display: flex; flex-direction: column; gap: 18px;
+}
+.dr-insp-head { display: flex; gap: 10px; align-items: flex-start; }
+.dr-insp-head .dr-file-icon { width: 38px; height: 38px; }
+.dr-insp-title { flex: 1; min-width: 0; }
+.dr-insp-title h3 { font-size: 14.5px; font-weight: 700; word-break: break-word; line-height: 1.35; }
+.dr-insp-title .dr-muted { font-size: 11.5px; }
+
+.dr-insp-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.dr-insp-actions .dr-btn { justify-content: center; height: 32px; font-size: 12.5px; }
+.dr-insp-actions .dr-btn.danger { grid-column: span 2; }
+
+.dr-insp-section { border-top: 1px solid var(--dr-border); padding-top: 14px; }
+.dr-insp-section h4 {
+  font-family: "Fira Code", monospace; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--dr-muted-fg); font-weight: 600; margin-bottom: 10px;
+}
+.dr-insp-section textarea, .dr-insp-section input:not([type="checkbox"]) {
+  width: 100%; padding: 8px 10px; font-size: 13px; font-family: inherit;
+  border: 1px solid var(--dr-border); border-radius: 6px;
+  background: var(--dr-muted); color: var(--dr-fg); margin-bottom: 8px; resize: vertical;
+}
+.dr-insp-section textarea:focus, .dr-insp-section input:focus {
+  outline: none; border-color: var(--dr-primary); box-shadow: 0 0 0 3px var(--dr-primary-soft);
+  background: var(--dr-surface);
+}
+.dr-insp-row { display: flex; gap: 8px; margin-top: 8px; }
+.dr-insp-row .dr-select { flex: 1; }
+.dr-share-live { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+
+.dr-notes { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; max-height: 260px; overflow-y: auto; }
+.dr-note { background: var(--dr-muted); border-radius: 6px; padding: 9px 11px; }
+.dr-note-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; font-size: 11px; color: var(--dr-muted-fg); }
+.dr-note-author { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: var(--dr-fg); }
+.dr-note-time { display: inline-flex; align-items: center; gap: 4px; flex: 1; font-family: "Fira Code", monospace; }
+.dr-note-body { font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.dr-note-form input[readonly] { opacity: 0.7; font-size: 12px; }
+
+/* Erişilebilirlik: hareket azaltma */
+@media (prefers-reduced-motion: reduce) {
+  #view-dataroom * { transition: none !important; }
+}
+
+/* Dar ekran: inspector tam genişlik üstte, sol panel gizlenir */
+@media (max-width: 1100px) {
+  #dr-side { display: none; }
+  #dr-inspector { width: 280px; }
+}

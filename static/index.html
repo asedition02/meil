@@ -142,23 +142,50 @@
 
     <!-- DATAROOM -->
     <main id="view-dataroom" class="view" style="display:none">
-      <div class="page page-dataroom-layout">
-        <div class="dataroom-left">
-          <div class="page-header">
-            <div>
-              <h2 class="page-title">Dataroom</h2>
-              <p class="page-desc">Mail ekleri otomatik olarak buraya kaydedilir. Kendi belgelerinizi de yükleyip kişisel depolama alanı olarak kullanabilirsiniz — not ekleyin, mail atın, paylaşım linkiyle paylaşın.</p>
-            </div>
-            <div class="page-actions">
-              <input id="upload-input" type="file" multiple style="display:none">
-              <button class="pill accent" id="upload-btn">⬆ Dosya Yükle</button>
-            </div>
-          </div>
-          <input id="dataroom-search" class="search-inline" placeholder="Dosya ara...">
-          <div id="dataroom-list"></div>
+      <aside id="dr-side">
+        <div id="dr-stats" class="dr-stats"></div>
+        <div class="dr-side-head">
+          <h3>Klasörler</h3>
+          <button class="dr-icon-btn" id="dr-new-folder" title="Yeni klasör" aria-label="Yeni klasör">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
         </div>
-        <div class="dataroom-right" id="dataroom-notes"></div>
-      </div>
+        <div id="dr-tree"></div>
+        <h3 class="dr-activity-title">Etkinlik Günlüğü</h3>
+        <div id="dr-activity"></div>
+      </aside>
+
+      <section id="dr-main">
+        <div class="dr-toolbar">
+          <div id="dr-breadcrumb" class="dr-breadcrumb"></div>
+          <div class="dr-toolbar-actions">
+            <div class="dr-search">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+              <input id="dataroom-search" placeholder="Dosya, etiket, not ara">
+            </div>
+            <select id="dr-sort" class="dr-select" aria-label="Sıralama">
+              <option value="date">Yeniden eskiye</option>
+              <option value="name">Ada göre</option>
+              <option value="size">Boyuta göre</option>
+            </select>
+            <input id="upload-input" type="file" multiple style="display:none">
+            <button class="dr-btn primary" id="upload-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4m0 0 4 4m-4-4-4 4M4 20h16"/></svg>
+              <span>Yükle</span>
+            </button>
+          </div>
+        </div>
+        <div id="dr-type-chips" class="dr-chips"></div>
+        <div id="dr-bulkbar" class="dr-bulkbar" style="display:none">
+          <span id="dr-bulk-count"></span>
+          <button class="dr-btn" id="dr-bulk-zip">ZIP indir</button>
+          <button class="dr-btn danger" id="dr-bulk-delete">Sil</button>
+          <button class="dr-btn ghost" id="dr-bulk-clear">Vazgeç</button>
+        </div>
+        <div id="dataroom-list"></div>
+      </section>
+
+      <aside id="dr-inspector" style="display:none"></aside>
     </main>
 
     <!-- HESAPLAR -->

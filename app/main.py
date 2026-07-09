@@ -579,6 +579,7 @@ def add_email_event(email_id: int, req: AddToCalendarRequest):
 class NoteRequest(BaseModel):
     path: str
     note: str = ""
+    tags: str = ""
 
 
 class AddNoteRequest(BaseModel):
@@ -589,6 +590,29 @@ class AddNoteRequest(BaseModel):
 
 class ShareRequest(BaseModel):
     path: str
+    expires_days: int = 0     # 0 = süresiz
+
+
+class FavoriteRequest(BaseModel):
+    path: str
+    favorite: bool
+
+
+class FolderRequest(BaseModel):
+    folder: str
+
+
+class MoveRequest(BaseModel):
+    path: str
+    folder: str
+
+
+class ZipRequest(BaseModel):
+    paths: list[str]
+
+
+class BulkDeleteRequest(BaseModel):
+    paths: list[str]
 
 
 class SendFileRequest(BaseModel):
@@ -610,17 +634,38 @@ def _resolve_or_404(path: str):
 def dataroom_files():
     files = dataroom.list_files()
     meta = database.all_file_meta()
+    shared_count, total_size = 0, 0
     for f in files:
         m = meta.get(f["path"], {})
         f["note"] = m.get("note") or ""
+        f["tags"] = [t.strip() for t in (m.get("tags") or "").split(",") if t.strip()]
+        f["favorite"] = bool(m.get("favorite"))
         f["share_token"] = m.get("share_token")
-    return {"files": files}
+        f["share_expires"] = m.get("share_expires")
+        f["share_downloads"] = m.get("share_downloads") or 0
+        if f["share_token"]:
+            shared_count += 1
+        total_size += f["size"]
+    return {
+        "files": files,
+        "folders": dataroom.list_folders(),
+        "activity": database.list_activity(),
+        "stats": {"count": len(files), "size": total_size, "shared": shared_count},
+    }
 
 
 @app.get("/api/dataroom/download")
 def dataroom_download(path: str):
     target = _resolve_or_404(path)
+    database.log_activity("download", path)
     return FileResponse(target, filename=target.name)
+
+
+@app.get("/api/dataroom/view")
+def dataroom_view(path: str):
+    """Tarayıcıda önizleme (indirme yerine satır içi gösterim)."""
+    target = _resolve_or_404(path)
+    return FileResponse(target, filename=target.name, content_disposition_type="inline")
 
 
 @app.post("/api/dataroom/upload")
@@ -632,10 +677,30 @@ async def dataroom_upload(files: list[UploadFile] = File(...), folder: str = For
         content = await f.read()
         if not content or not f.filename:
             continue
-        saved.append(dataroom.save_upload(target_folder, f.filename, content))
+        s = dataroom.save_upload(target_folder, f.filename, content)
+        database.log_activity("upload", s["path"])
+        saved.append(s)
     if not saved:
         raise HTTPException(status_code=400, detail="Yüklenecek dosya yok")
     return {"ok": True, "files": saved}
+
+
+@app.post("/api/dataroom/folder")
+def dataroom_create_folder(req: FolderRequest):
+    if not req.folder.strip():
+        raise HTTPException(status_code=400, detail="Klasör adı gerekli")
+    created = dataroom.create_folder(req.folder)
+    database.log_activity("folder", created)
+    return {"ok": True, "folder": created}
+
+
+@app.post("/api/dataroom/move")
+def dataroom_move(req: MoveRequest):
+    _resolve_or_404(req.path)
+    new_path = dataroom.move_file(req.path, req.folder)
+    database.update_meta_path(req.path, new_path)
+    database.log_activity("move", new_path, detail=f"{req.path} → {new_path}")
+    return {"ok": True, "path": new_path}
 
 
 @app.delete("/api/dataroom/file")
@@ -643,19 +708,66 @@ def dataroom_delete(path: str):
     _resolve_or_404(path)
     dataroom.delete_file(path)
     database.delete_file_meta(path)
+    database.log_activity("delete", path)
     return {"ok": True}
+
+
+@app.post("/api/dataroom/bulk-delete")
+def dataroom_bulk_delete(req: BulkDeleteRequest):
+    deleted = 0
+    for path in req.paths:
+        try:
+            dataroom.delete_file(path)
+            database.delete_file_meta(path)
+            database.log_activity("delete", path)
+            deleted += 1
+        except FileNotFoundError:
+            continue
+    return {"ok": True, "deleted": deleted}
+
+
+@app.post("/api/dataroom/zip")
+def dataroom_zip(req: ZipRequest):
+    """Seçili dosyaları tek ZIP olarak indirir."""
+    if not req.paths:
+        raise HTTPException(status_code=400, detail="Dosya seçilmedi")
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for path in req.paths:
+            target = _resolve_or_404(path)
+            z.write(target, arcname=path)
+            database.log_activity("download", path, detail="zip")
+    buf.seek(0)
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="dataroom.zip"'},
+    )
 
 
 @app.post("/api/dataroom/note")
 def dataroom_note(req: NoteRequest):
+    """Dosyanın sabit açıklaması + etiketleri."""
     _resolve_or_404(req.path)
     database.set_file_note(req.path, req.note.strip())
+    database.set_file_tags(req.path, req.tags.strip())
+    database.log_activity("note", req.path)
+    return {"ok": True}
+
+
+@app.post("/api/dataroom/favorite")
+def dataroom_favorite(req: FavoriteRequest):
+    _resolve_or_404(req.path)
+    database.set_favorite(req.path, req.favorite)
     return {"ok": True}
 
 
 @app.get("/api/dataroom/notes")
 def dataroom_get_notes(path: str):
-    """Dosyanın tüm notlarını getirir."""
+    """Dosyanın tüm notlarını getirir (yazarlı not akışı)."""
     _resolve_or_404(path)
     notes = database.get_file_notes(path)
     return {"notes": notes}
@@ -665,7 +777,10 @@ def dataroom_get_notes(path: str):
 def dataroom_add_note(req: AddNoteRequest):
     """Dosyaya yeni not ekler."""
     _resolve_or_404(req.path)
+    if not req.content.strip():
+        raise HTTPException(status_code=400, detail="Not boş olamaz")
     note = database.add_file_note(req.path, req.author.strip(), req.content.strip())
+    database.log_activity("note", req.path)
     return {"ok": True, "note": note}
 
 
@@ -678,31 +793,47 @@ def dataroom_delete_note(note_id: int):
 
 @app.post("/api/dataroom/share")
 def dataroom_share(req: ShareRequest):
-    """Dosya için paylaşım linki oluşturur (varsa mevcut linki döner)."""
+    """Paylaşım linki oluşturur; istenirse süreli."""
     _resolve_or_404(req.path)
-    token = database.get_share_token(req.path)
+    info = database.get_share_info(req.path) or {}
+    token = info.get("share_token")
+    expires = None
+    if req.expires_days > 0:
+        expires = (dt.datetime.now() + dt.timedelta(days=req.expires_days)).isoformat(timespec="minutes")
     if not token:
         token = secrets.token_urlsafe(16)
-        database.set_share_token(req.path, token)
-    return {"ok": True, "token": token, "url": f"/share/{token}"}
+        database.set_share_token(req.path, token, expires)
+        database.log_activity("share_created", req.path,
+                              detail=f"{req.expires_days} gün" if expires else "süresiz")
+        downloads = 0
+    else:
+        downloads = info.get("share_downloads") or 0
+        expires = info.get("share_expires")
+    return {"ok": True, "token": token, "url": f"/share/{token}",
+            "expires": expires, "downloads": downloads}
 
 
 @app.delete("/api/dataroom/share")
 def dataroom_unshare(path: str):
     database.clear_share_token(path)
+    database.log_activity("share_revoked", path)
     return {"ok": True}
 
 
 @app.get("/share/{token}")
 def shared_file(token: str):
     """Paylaşım linki — giriş gerektirmez; linki bilen dosyayı indirebilir."""
-    path = database.get_path_by_token(token)
-    if not path:
+    info = database.get_share_by_token(token)
+    if not info:
         raise HTTPException(status_code=404, detail="Link geçersiz veya iptal edilmiş")
+    if info.get("share_expires") and info["share_expires"] < dt.datetime.now().isoformat():
+        raise HTTPException(status_code=404, detail="Linkin süresi dolmuş")
     try:
-        target = dataroom.resolve_file(path)
+        target = dataroom.resolve_file(info["path"])
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Dosya artık mevcut değil")
+    database.increment_share_downloads(info["path"])
+    database.log_activity("share_download", info["path"])
     return FileResponse(target, filename=target.name)
 
 
@@ -730,11 +861,12 @@ def dataroom_send(req: SendFileRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gönderim başarısız: {e}")
+    database.log_activity("send", req.path, detail=req.to.strip())
     return {"ok": True}
 
 
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 7
+API_VERSION = 8
 
 
 @app.get("/api/status")
