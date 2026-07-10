@@ -45,6 +45,26 @@ function avatarHtml(name, email, cls = "") {
   return `<div class="avatar ${cls}" style="background:${avatarColor(email || name)}">${esc(initials(name, email))}</div>`;
 }
 
+
+// Posta SVG ikonları (Lucide tarzı — emoji yerine, skill kuralı)
+const MI = {
+  inbox: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5 5h14l3 7v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-6l3-7Z"/></svg>',
+  star: (on) => `<svg width="13" height="13" viewBox="0 0 24 24" fill="${on ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2"><path d="m12 3 2.7 5.6 6.3.9-4.5 4.4 1 6.1L12 17.2 6.5 20l1-6.1L3 9.5l6.3-.9L12 3Z"/></svg>`,
+  hourglass: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12M6 21h12M8 3v4l4 5 4-5V3M8 21v-4l4-5 4 5v4"/></svg>',
+  clock: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
+  archive: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/></svg>',
+  unarchive: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5 5h14l3 7v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-6l3-7Z"/></svg>',
+  mailUnread: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 8 9 6 9-6"/><circle cx="19" cy="6" r="3" fill="currentColor" stroke="none"/></svg>',
+  send: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 3 18 9-18 9 4-9-4-9ZM7 12h14"/></svg>',
+  refresh: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>',
+  paperclip: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21 12-8.5 8.5a5 5 0 0 1-7-7L14 5a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L16 7"/></svg>',
+  calendar: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+  pin: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px"><path d="M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg>',
+  sparkle: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3m9-9h-3M6 12H3m14.5-6.5-2 2m-9 9-2 2m13 0-2-2m-9-9-2-2"/><circle cx="12" cy="12" r="3"/></svg>',
+  moon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>',
+  sun: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+};
+
 function toast(msg, isError = false) {
   const el = $("#toast");
   el.textContent = msg;
@@ -103,7 +123,7 @@ function formatSize(bytes) {
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  $("#theme-toggle").textContent = theme === "dark" ? "☀️" : "🌙";
+  $("#theme-toggle").innerHTML = theme === "dark" ? MI.sun : MI.moon;
   localStorage.setItem("meil-theme", theme);
 }
 $("#theme-toggle").onclick = () => {
@@ -144,8 +164,8 @@ document.querySelectorAll(".rail-btn").forEach((btn) => {
 // ---- Posta ----
 
 const VIEW_LABELS = {
-  inbox: ["📥", "Gelen"], starred: ["⭐", "Yıldızlı"], awaiting: ["⏳", "Bekleyen"],
-  snoozed: ["😴", "Ertelenen"], archived: ["🗂", "Arşiv"],
+  inbox: [MI.inbox, "Gelen"], starred: [MI.star(false), "Yıldızlı"], awaiting: [MI.hourglass, "Bekleyen"],
+  snoozed: [MI.clock, "Ertelenen"], archived: [MI.archive, "Arşiv"],
 };
 const VIEW_TITLES = {
   inbox: "Gelen Kutusu", starred: "Yıldızlı", awaiting: "Yanıt Bekleyen",
@@ -246,11 +266,11 @@ function renderList() {
     .map((e) => {
       const active = e.id === state.selectedId ? " active" : "";
       const replied = e.status === "replied" ? `<span class="badge replied">✓ yanıtlandı</span>` : "";
-      const att = e.attachments.length ? `<span class="badge">📎 ${e.attachments.length}</span>` : "";
+      const att = e.attachments.length ? `<span class="badge">${MI.paperclip} ${e.attachments.length}</span>` : "";
       const acct = showAcct && e.account_email ? `<span class="badge acct">${esc(e.account_name || e.account_email)}</span>` : "";
       const unread = !e.is_read ? " unread" : "";
       const snoozed = state.activeView === "snoozed" && e.snooze_until
-        ? `<span class="badge">😴 ${formatDateFull(e.snooze_until)}</span>` : "";
+        ? `<span class="badge">${MI.clock} ${formatDateFull(e.snooze_until)}</span>` : "";
       return `
       <div class="email-item${active}${unread}" data-id="${e.id}">
         ${!e.is_read ? '<span class="unread-dot"></span>' : ""}
@@ -260,7 +280,7 @@ function renderList() {
             <span class="from">${esc(e.sender_name || e.sender_email)}</span>
             <span style="display:flex;align-items:center">
               <span class="time">${formatDate(e.date)}</span>
-              <button class="star-btn${e.starred ? " on" : ""}" data-star="${e.id}" title="Yıldızla (s)">⭐</button>
+              <button class="star-btn${e.starred ? " on" : ""}" data-star="${e.id}" title="Yıldızla (s)" aria-label="Yıldızla">${MI.star(e.starred)}</button>
             </span>
           </div>
           <div class="subject">${esc(e.subject)}</div>
@@ -309,7 +329,7 @@ async function selectEmail(id) {
 
 function renderDetail(e) {
   const attachments = e.attachments.length
-    ? `<div class="card"><h3>📎 Ekler — dataroom'a kaydedildi</h3><div class="attachment-list">
+    ? `<div class="card"><h3>${MI.paperclip} Ekler — dataroom'a kaydedildi</h3><div class="attachment-list">
         ${e.attachments.map((a) => `<a href="/api/dataroom/download?path=${encodeURIComponent(a.path)}">${esc(a.filename)} <span class="size">${formatSize(a.size)}</span></a>`).join("")}
        </div></div>`
     : "";
@@ -321,15 +341,15 @@ function renderDetail(e) {
   const writableCals = state.calendars.filter((c) => c.type === "icloud");
   const eventCard = e.event && e.event.exists && e.event.date
     ? `<div class="card event-card">
-        <h3>📅 Tespit Edilen Etkinlik</h3>
+        <h3>${MI.calendar} Tespit Edilen Etkinlik</h3>
         <div class="ev-line"><strong>${esc(e.event.title || e.subject)}</strong></div>
-        <div class="ev-line">${esc(e.event.date)}${e.event.time ? " · " + esc(e.event.time) : " · tüm gün"}${e.event.location ? " · 📍 " + esc(e.event.location) : ""}</div>
+        <div class="ev-line">${esc(e.event.date)}${e.event.time ? " · " + esc(e.event.time) : " · tüm gün"}${e.event.location ? " · " + MI.pin + " " + esc(e.event.location) : ""}</div>
         <div class="ev-actions">
           <select id="event-cal-select">
             <option value="">Meil (yerel takvim)</option>
             ${writableCals.map((c) => `<option value="${c.id}">${esc(c.name)} (iCloud)</option>`).join("")}
           </select>
-          <button class="pill accent" id="add-event-btn">＋ Takvime Ekle</button>
+          <button class="pill accent" id="add-event-btn">${MI.calendar} Takvime Ekle</button>
         </div>
       </div>`
     : "";
@@ -348,22 +368,22 @@ function renderDetail(e) {
         </div>
       </div>
       <div class="detail-toolbar">
-        <button class="icon-btn" id="d-star" title="Yıldızla">${e.starred ? "⭐" : "☆"}</button>
-        <button class="icon-btn" id="d-snooze" title="Ertele">😴</button>
-        <button class="icon-btn" id="d-unread" title="Okunmadı işaretle">📪</button>
-        <button class="icon-btn" id="d-archive" title="${e.status === "archived" ? "Gelen kutusuna taşı" : "Arşivle"}">${e.status === "archived" ? "📥" : "🗂"}</button>
+        <button class="icon-btn${e.starred ? " on" : ""}" id="d-star" title="Yıldızla (s)" aria-label="Yıldızla">${MI.star(e.starred)}</button>
+        <button class="icon-btn" id="d-snooze" title="Ertele" aria-label="Ertele">${MI.clock}</button>
+        <button class="icon-btn" id="d-unread" title="Okunmadı işaretle" aria-label="Okunmadı işaretle">${MI.mailUnread}</button>
+        <button class="icon-btn" id="d-archive" title="${e.status === "archived" ? "Gelen kutusuna taşı" : "Arşivle (e)"}" aria-label="Arşivle">${e.status === "archived" ? MI.unarchive : MI.archive}</button>
       </div>
     </div>
-    <div class="card summary-card"><h3>✨ Özet</h3><p>${esc(e.summary || "")}</p></div>
+    <div class="card summary-card"><h3>${MI.sparkle} AI Özeti</h3><p>${esc(e.summary || "")}</p></div>
     ${eventCard}
     ${attachments}
     <div class="card">
       <h3>Yanıt Taslağı ${e.status === "replied" ? "— ✓ gönderildi" : "· onayınızla gönderilir"}</h3>
       <textarea id="reply-text" placeholder="Yanıt taslağı...">${esc(e.suggested_reply || "")}</textarea>
       <div class="reply-actions">
-        <button class="pill accent" id="send-btn" ${e.status === "replied" ? "disabled" : ""}>➤ Onayla ve Gönder</button>
+        <button class="pill accent" id="send-btn" ${e.status === "replied" ? "disabled" : ""}>${MI.send} Onayla ve Gönder</button>
         <input id="regen-instruction" placeholder="İsteğe bağlı talimat (ör: daha resmi yaz, toplantı öner...)">
-        <button class="pill ghost" id="regen-btn">↻ Yeniden Öner</button>
+        <button class="pill ghost" id="regen-btn">${MI.refresh} Yeniden Öner</button>
         <button class="pill ghost" id="archive-btn">Arşivle</button>
       </div>
     </div>
@@ -402,7 +422,7 @@ function renderDetail(e) {
       toast(err.message, true);
     } finally {
       btn.disabled = false;
-      btn.textContent = "↻ Yeniden Öner";
+      btn.innerHTML = MI.refresh + " Yeniden Öner";
     }
   };
 
@@ -416,7 +436,8 @@ function renderDetail(e) {
     await api(`/api/emails/${e.id}/star`, { method: "POST",
       body: JSON.stringify({ value: !e.starred }) });
     e.starred = !e.starred;
-    $("#d-star").textContent = e.starred ? "⭐" : "☆";
+    $("#d-star").innerHTML = MI.star(e.starred);
+    $("#d-star").classList.toggle("on", e.starred);
     loadEmails();
   };
   $("#d-unread").onclick = async () => {
@@ -479,7 +500,7 @@ function isoLocal(d) {
 function openSnoozeModal(e) {
   const presets = snoozePresets();
   openModal(`
-    <h3>😴 Ertele — ${esc(e.subject)}</h3>
+    <h3>Ertele — ${esc(e.subject)}</h3>
     <div class="modal-sub">Mail seçilen zamana kadar gelen kutusundan gizlenir; "Ertelenen" sekmesinde durur.</div>
     <div class="modal-list">
       ${presets.map(([label, d], i) => `<button class="pill ghost" data-snooze="${isoLocal(d)}">${label} <span style="color:var(--muted)">· ${d.toLocaleDateString("tr-TR", { day: "2-digit", month: "short" })}</span></button>`).join("")}
@@ -495,7 +516,7 @@ function openSnoozeModal(e) {
   const doSnooze = async (until) => {
     await api(`/api/emails/${e.id}/snooze`, { method: "POST",
       body: JSON.stringify({ until }) });
-    toast(until ? "Mail ertelendi 😴" : "Erteleme kaldırıldı");
+    toast(until ? "Mail ertelendi" : "Erteleme kaldırıldı");
     closeModal();
     state.selectedId = null;
     loadEmails();
@@ -520,7 +541,7 @@ function openComposeModal(prefill = {}) {
     .map((a) => `<option value="${a.id}">${esc(a.display_name || a.email)}</option>`)
     .join("");
   openModal(`
-    <h3>✎ Yeni Mail</h3>
+    <h3>Yeni Mail</h3>
     <div class="form-col">
       <select id="c-account">${accountOptions}</select>
       <input id="c-to" type="email" placeholder="Alıcı" value="${esc(prefill.to || "")}">
@@ -528,13 +549,13 @@ function openComposeModal(prefill = {}) {
       <input id="c-subject" placeholder="Konu" value="${esc(prefill.subject || "")}">
       <textarea id="c-body" style="min-height:180px" placeholder="Mesajınız...">${esc(prefill.body || "")}</textarea>
       <div class="form-row">
-        <input id="c-ai" placeholder="✨ AI'ya anlatın: 'yarınki toplantıyı iptal et, kibarca'">
-        <button class="pill ghost" id="c-ai-btn" style="flex:0 0 auto">✨ AI ile Yaz</button>
+        <input id="c-ai" placeholder="AI'ya anlatın: 'yarınki toplantıyı iptal et, kibarca'">
+        <button class="pill ghost" id="c-ai-btn" style="flex:0 0 auto">${MI.sparkle} AI ile Yaz</button>
       </div>
     </div>
     <div class="modal-actions">
       <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
-      <button class="pill accent" id="c-send">➤ Gönder</button>
+      <button class="pill accent" id="c-send">${MI.send} Gönder</button>
     </div>`);
   $("#c-ai-btn").onclick = async () => {
     const instruction = $("#c-ai").value.trim();
@@ -548,7 +569,7 @@ function openComposeModal(prefill = {}) {
       if (!$("#c-subject").value) $("#c-subject").value = draft.subject;
       toast("Taslak hazır — düzenleyip gönderebilirsiniz");
     } catch (err) { toast(err.message, true); }
-    finally { btn.disabled = false; btn.textContent = "✨ AI ile Yaz"; }
+    finally { btn.disabled = false; btn.innerHTML = MI.sparkle + " AI ile Yaz"; }
   };
   $("#c-send").onclick = async () => {
     const btn = $("#c-send");
@@ -566,7 +587,7 @@ function openComposeModal(prefill = {}) {
       closeModal();
     } catch (err) {
       toast(err.message, true);
-      btn.disabled = false; btn.textContent = "➤ Gönder";
+      btn.disabled = false; btn.innerHTML = MI.send + " Gönder";
     }
   };
 }
@@ -602,7 +623,7 @@ setInterval(async () => {
   try {
     const data = await api("/api/sync", { method: "POST" });
     if (data.new_emails > 0) {
-      toast(`📬 ${data.new_emails} yeni mail geldi`);
+      toast(`${data.new_emails} yeni mail geldi`);
       loadEmails();
     }
   } catch { /* sessizce geç */ }
@@ -1402,7 +1423,7 @@ function renderDayAgenda() {
         <span class="bar" style="background:${calColor(ev)}"></span>
         <div class="ev-body">
           <div class="ev-title">${esc(ev.title)}</div>
-          <div class="ev-meta">${time} · ${esc(calName)}${ev.location ? " · 📍 " + esc(ev.location) : ""}</div>
+          <div class="ev-meta">${time} · ${esc(calName)}${ev.location ? " · " + MI.pin + " " + esc(ev.location) : ""}</div>
         </div>
         ${deletable ? `<button class="ev-del" data-ev="${ev.id}" title="Sil">✕</button>` : ""}
       </div>`;

@@ -1,52 +1,55 @@
-/* Meil — modern mail arayüzü (açık + karanlık tema) */
+/* Meil — Swiss/Minimal arayüz (ui-ux-pro-max tasarım sistemi)
+   Palet: inbox mavisi #2563EB · Tipografi: Plus Jakarta Sans + Fira Code */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Fira+Code:wght@400;500;600&family=Fira+Sans:wght@400;500;600;700&display=swap');
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-  --bg: #f2f4f7;
+  --bg: #f8fafc;
   --panel: #ffffff;
-  --panel-2: #fafbfc;
-  --border: #e6e8ee;
-  --text: #191d26;
-  --muted: #737a8c;
-  --accent: #0f8a6d;          /* modern teal-yeşil */
-  --accent-hover: #0b7259;
-  --accent-soft: #e2f5ef;
-  --accent-text: #0a6b54;
-  --red: #d64550;
-  --red-soft: #fdeef0;
-  --amber: #b06d0a;
-  --amber-soft: #fdf3e2;
-  --green: #1e8e5a;
-  --green-soft: #e6f6ed;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
-  --shadow-lg: 0 8px 24px rgba(16, 24, 40, 0.10);
-  --radius: 14px;
-  --radius-sm: 9px;
+  --panel-2: #f1f5f9;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #2563eb;          /* Swiss inbox mavisi */
+  --accent-hover: #1d4ed8;
+  --accent-soft: #eff6ff;
+  --accent-text: #1d4ed8;
+  --red: #dc2626;
+  --red-soft: #fef2f2;
+  --amber: #b45309;
+  --amber-soft: #fffbeb;
+  --green: #059669;
+  --green-soft: #ecfdf5;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.12);
+  --radius: 10px;
+  --radius-sm: 8px;
 }
 
 [data-theme="dark"] {
-  --bg: #0e1015;
-  --panel: #181b22;
-  --panel-2: #1e222b;
-  --border: #2a2f3a;
-  --text: #e8eaf0;
-  --muted: #8c93a5;
-  --accent: #2bbf98;
-  --accent-hover: #37d4aa;
-  --accent-soft: #10352c;
-  --accent-text: #4fd9b5;
-  --red: #f0717b;
-  --red-soft: #3a1d22;
-  --amber: #e3a94f;
-  --amber-soft: #362a15;
-  --green: #57c58a;
-  --green-soft: #16301f;
+  --bg: #0b1220;
+  --panel: #101827;
+  --panel-2: #1e293b;
+  --border: #283548;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-soft: #172554;
+  --accent-text: #93b4f8;
+  --red: #f87171;
+  --red-soft: #2d1a1c;
+  --amber: #fbbf24;
+  --amber-soft: #2c2410;
+  --green: #34d399;
+  --green-soft: #06281e;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", sans-serif;
+  font-family: "Plus Jakarta Sans", -apple-system, "Segoe UI", sans-serif;
   background: var(--bg);
   color: var(--text);
   height: 100vh;
@@ -68,7 +71,7 @@ body {
 .brand { display: flex; align-items: center; gap: 9px; min-width: 150px; }
 .brand-mark {
   width: 30px; height: 30px; border-radius: 9px;
-  background: linear-gradient(135deg, var(--accent), #16a085);
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   color: #fff; font-weight: 800; font-size: 16px;
   display: flex; align-items: center; justify-content: center;
   box-shadow: var(--shadow);
@@ -110,11 +113,14 @@ body {
 .pill:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .icon-btn {
-  width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--border);
-  background: var(--panel); cursor: pointer; font-size: 15px;
+  width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--panel); cursor: pointer; font-size: 15px; color: var(--muted);
   display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
 }
-.icon-btn:hover { background: var(--panel-2); }
+.icon-btn:hover { background: var(--panel-2); border-color: var(--accent); color: var(--accent-text); }
+.icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.icon-btn.on { color: var(--amber); border-color: var(--amber); background: var(--amber-soft); }
 
 #layout { flex: 1; display: flex; overflow: hidden; gap: 12px; padding: 0 12px 12px; }
 
@@ -161,25 +167,27 @@ body {
 .chips::-webkit-scrollbar { display: none; }
 .chip {
   flex-shrink: 0; border: 1px solid var(--border); background: var(--panel);
-  color: var(--muted); border-radius: 999px; padding: 5px 12px;
+  color: var(--muted); border-radius: 6px; padding: 5px 12px;
   font-size: 12px; font-weight: 600; font-family: inherit; cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.2s;
 }
 .chip:hover { border-color: var(--accent); color: var(--accent-text); }
-.chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip.active { background: var(--text); border-color: var(--text); color: var(--bg); }
 .chip .n { opacity: 0.7; font-weight: 500; margin-left: 3px; }
 
 /* Görünüm sekmeleri (Gelen/Yıldızlı/Bekleyen/Ertelenen/Arşiv) */
 .view-tabs {
   display: flex; gap: 2px; margin-bottom: 10px;
   background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: 999px; padding: 3px;
+  border-radius: 8px; padding: 3px;
 }
 .view-tab {
-  flex: 1; border: none; background: none; padding: 6px 4px; cursor: pointer;
-  font-size: 11.5px; font-weight: 650; font-family: inherit; color: var(--muted);
-  border-radius: 999px; white-space: nowrap; position: relative;
+  flex: 1; border: none; background: none; padding: 6px 2px; cursor: pointer;
+  font-size: 11px; font-weight: 600; font-family: inherit; color: var(--muted);
+  border-radius: 6px; white-space: nowrap; position: relative;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
 }
+.view-tab svg { flex-shrink: 0; }
 .view-tab:hover { color: var(--text); }
 .view-tab.active { background: var(--panel); color: var(--accent-text); box-shadow: var(--shadow); }
 .view-tab .vn { font-weight: 500; opacity: 0.7; font-size: 10.5px; }
@@ -192,10 +200,12 @@ body {
 }
 .email-item.unread .from, .email-item.unread .subject { font-weight: 800; }
 .star-btn {
-  background: none; border: none; cursor: pointer; font-size: 14px;
-  opacity: 0.3; padding: 0 2px; flex-shrink: 0;
+  background: none; border: none; cursor: pointer; color: var(--muted);
+  opacity: 0.4; padding: 0 2px; flex-shrink: 0; transition: all 0.2s;
+  display: inline-flex; align-items: center;
 }
-.star-btn.on { opacity: 1; }
+.star-btn:hover { opacity: 1; color: var(--amber); }
+.star-btn.on { opacity: 1; color: var(--amber); }
 .star-btn:hover { opacity: 0.8; }
 .rail-badge {
   position: absolute; top: 2px; right: 12px; background: var(--red); color: #fff;
@@ -216,7 +226,7 @@ body {
 .email-item .item-body { flex: 1; min-width: 0; }
 .email-item .row1 { display: flex; justify-content: space-between; align-items: baseline; }
 .email-item .from { font-weight: 650; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.email-item .time { font-size: 11px; color: var(--muted); flex-shrink: 0; margin-left: 8px; }
+.email-item .time { font-family: "Fira Code", monospace; font-size: 10.5px; color: var(--muted); flex-shrink: 0; margin-left: 8px; }
 .email-item .subject { font-size: 13px; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .email-item .summary {
   font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.4;
@@ -230,12 +240,13 @@ body {
   display: flex; align-items: center; justify-content: center;
   color: #fff; font-weight: 700; font-size: 13.5px;
 }
-.avatar.small { width: 32px; height: 32px; font-size: 12px; border-radius: 999px; background: linear-gradient(135deg, var(--accent), #16a085); }
+.avatar.small { width: 32px; height: 32px; font-size: 12px; border-radius: 999px; background: linear-gradient(135deg, var(--accent), var(--accent-hover)); }
 .avatar.large { width: 48px; height: 48px; font-size: 17px; border-radius: 14px; }
 
 /* ---------- Rozetler ---------- */
 .badge {
-  font-size: 11px; padding: 2px 9px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; padding: 2px 8px; border-radius: 5px;
   background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
   font-weight: 550;
 }
@@ -264,8 +275,9 @@ body {
   border-radius: var(--radius); padding: 18px; margin-bottom: 14px;
 }
 .card h3 {
-  font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.7px;
-  color: var(--muted); margin-bottom: 11px; font-weight: 700;
+  font-family: "Fira Code", monospace;
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--muted); margin-bottom: 11px; font-weight: 600;
 }
 .card .body-text { white-space: pre-wrap; font-size: 14px; line-height: 1.6; max-height: 360px; overflow-y: auto; }
 
@@ -684,7 +696,6 @@ table.dataroom input[type="checkbox"] { width: 15px; height: 15px; accent-color:
    Palet: kurumsal mavi #2563EB + anlaşma yeşili #059669
    Tipografi: Fira Sans (gövde) + Fira Code (veri/başlık)
    ============================================================ */
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fira+Sans:wght@400;500;600;700&display=swap');
 
 #view-dataroom {
   --dr-primary: #2563eb;
