@@ -63,6 +63,7 @@ const MI = {
   sparkle: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3m9-9h-3M6 12H3m14.5-6.5-2 2m-9 9-2 2m13 0-2-2m-9-9-2-2"/><circle cx="12" cy="12" r="3"/></svg>',
   moon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>',
   sun: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  x: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg>',
 };
 
 function toast(msg, isError = false) {
@@ -1425,7 +1426,7 @@ function renderDayAgenda() {
           <div class="ev-title">${esc(ev.title)}</div>
           <div class="ev-meta">${time} · ${esc(calName)}${ev.location ? " · " + MI.pin + " " + esc(ev.location) : ""}</div>
         </div>
-        ${deletable ? `<button class="ev-del" data-ev="${ev.id}" title="Sil">✕</button>` : ""}
+        ${deletable ? `<button class="ev-del" data-ev="${ev.id}" title="Sil">${MI.x}</button>` : ""}
       </div>`;
     })
     .join("");
@@ -1451,7 +1452,7 @@ function renderCalendarSources() {
       <span class="dot" style="background:${c.color || "#0f8a6d"}"></span>
       <span class="src-name">${esc(c.name)}</span>
       <span class="src-type">${typeLabel[c.type] || c.type}</span>
-      <button class="ev-del" data-cal="${c.id}" title="Kaldır">✕</button>
+      <button class="ev-del" data-cal="${c.id}" title="Kaldır">${MI.x}</button>
     </div>`)
     .join("");
   holder.querySelectorAll("[data-cal]").forEach((btn) => {
@@ -1493,7 +1494,7 @@ $("#cal-today").onclick = () => {
 $("#cal-sync").onclick = async () => {
   const btn = $("#cal-sync");
   btn.disabled = true;
-  btn.textContent = "⟳ Eşitleniyor...";
+  btn.innerHTML = MI.refresh + " Eşitleniyor...";
   try {
     const data = await api("/api/calendars/sync", { method: "POST" });
     const failed = data.results.filter((r) => r.error);
@@ -1506,7 +1507,7 @@ $("#cal-sync").onclick = async () => {
     toast(err.message, true);
   } finally {
     btn.disabled = false;
-    btn.textContent = "⟳ Takvimleri Eşitle";
+    btn.innerHTML = MI.refresh + " Takvimleri Eşitle";
   }
 };
 
