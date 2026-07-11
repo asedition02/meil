@@ -183,6 +183,8 @@ def fetch_recent(account: dict, limit: int) -> list[dict]:
                     "account_id": account.get("id"),
                     "imap_uid": uid.decode(),
                     "message_id": msg.get("Message-ID", "").strip() or f"uid:{uid.decode()}",
+                    "in_reply_to": (msg.get("In-Reply-To") or "").strip(),
+                    "references": " ".join((msg.get("References") or "").split()),
                     "sender_name": sender_name,
                     "sender_email": sender_email,
                     "subject": _decode(msg.get("Subject")),
@@ -217,7 +219,7 @@ def _smtp_connect(account: dict) -> smtplib.SMTP:
 
 
 def send_reply(account: dict, to_address: str, subject: str, body: str,
-               in_reply_to: str | None = None):
+               in_reply_to: str | None = None, references: str = ""):
     """Onaylanan yanıtı, maili alan hesabın SMTP sunucusundan gönderir."""
     _validate(account)
     msg = EmailMessage()
@@ -226,7 +228,11 @@ def send_reply(account: dict, to_address: str, subject: str, body: str,
     msg["Subject"] = subject if subject.lower().startswith("re:") else f"Re: {subject}"
     if in_reply_to and not in_reply_to.startswith("uid:"):
         msg["In-Reply-To"] = in_reply_to
-        msg["References"] = in_reply_to
+        # References = yanıtlanan mailin zinciri + kendi Message-ID'si
+        chain = [r for r in references.split() if r] if references else []
+        if in_reply_to not in chain:
+            chain.append(in_reply_to)
+        msg["References"] = " ".join(chain)
     msg.set_content(body)
     with _smtp_connect(account) as smtp:
         smtp.send_message(msg)

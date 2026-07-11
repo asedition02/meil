@@ -40,8 +40,12 @@ CREATE TABLE IF NOT EXISTS emails (
     is_read INTEGER DEFAULT 0,
     starred INTEGER DEFAULT 0,
     snooze_until TEXT,                  -- ISO tarih-saat; ertelenen mailler
+    in_reply_to TEXT,                   -- yanıtlanan mailin Message-ID'si
+    refs TEXT,                          -- References başlığı (kök → ebeveyn zinciri)
+    thread_id TEXT,                     -- konuşma anahtarı: zincirin kök Message-ID'si
     created_at TEXT DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_emails_thread ON emails(account_id, thread_id);
 
 CREATE TABLE IF NOT EXISTS calendars (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,6 +150,12 @@ def _migrate(db: sqlite3.Connection):
         db.execute("ALTER TABLE emails ADD COLUMN starred INTEGER DEFAULT 0")
         db.execute("ALTER TABLE emails ADD COLUMN snooze_until TEXT")
         db.execute("UPDATE emails SET is_read = 1")  # mevcut mailler okunmuş sayılsın
+    if cols and "thread_id" not in cols:
+        # threading öncesi şema → konuşma sütunları; mevcut mailler tek başına dizi olur
+        db.execute("ALTER TABLE emails ADD COLUMN in_reply_to TEXT")
+        db.execute("ALTER TABLE emails ADD COLUMN refs TEXT")
+        db.execute("ALTER TABLE emails ADD COLUMN thread_id TEXT")
+        db.execute("UPDATE emails SET thread_id = message_id WHERE thread_id IS NULL")
     meta_cols = {r["name"] for r in db.execute("PRAGMA table_info(dataroom_meta)").fetchall()}
     if meta_cols and "tags" not in meta_cols:
         # dataroom v2 öncesi şema → yeni sütunlar
@@ -467,14 +477,36 @@ def email_exists(message_id: str, account_id: int | None) -> bool:
         return row is not None
 
 
+def _compute_thread_id(db: sqlite3.Connection, data: dict) -> str:
+    """Konuşma anahtarı: zincirdeki bilinen bir mailin thread'i, yoksa kök Message-ID.
+
+    References başlığı kökten ebeveyne doğru tüm zinciri taşır; ilk halka kök
+    kabul edilir. Kökü olmayan (yeni başlayan) mailin anahtarı kendi ID'sidir.
+    """
+    refs = (data.get("references") or "").split()
+    candidates = refs + ([data["in_reply_to"]] if data.get("in_reply_to") else [])
+    if not candidates:
+        return data["message_id"]
+    placeholders = ",".join("?" for _ in candidates)
+    row = db.execute(
+        f"""SELECT thread_id FROM emails
+            WHERE account_id IS ? AND thread_id IS NOT NULL
+              AND message_id IN ({placeholders}) LIMIT 1""",
+        (data.get("account_id"), *candidates),
+    ).fetchone()
+    return row["thread_id"] if row else candidates[0]
+
+
 def insert_email(data: dict) -> int:
     with get_db() as db:
+        thread_id = _compute_thread_id(db, data)
         cur = db.execute(
             """INSERT INTO emails
                (account_id, message_id, imap_uid, sender_name, sender_email,
                 subject, date, body_text, category, priority, summary,
-                needs_reply, suggested_reply, attachments, event_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                needs_reply, suggested_reply, attachments, event_json,
+                in_reply_to, refs, thread_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 data.get("account_id"),
                 data["message_id"],
@@ -491,6 +523,9 @@ def insert_email(data: dict) -> int:
                 data.get("suggested_reply"),
                 json.dumps(data.get("attachments", []), ensure_ascii=False),
                 data.get("event_json"),
+                data.get("in_reply_to"),
+                data.get("references"),
+                thread_id,
             ),
         )
         return cur.lastrowid
@@ -533,6 +568,59 @@ def list_emails(category: str | None = None, status: str | None = None,
     with get_db() as db:
         rows = db.execute(query, params).fetchall()
         return [_row_to_dict(r) for r in rows]
+
+
+def list_threads(category: str | None = None, status: str | None = None,
+                 account_id: int | None = None, view: str = "inbox") -> list[dict]:
+    """Görünüme uyan mailleri konuşma dizilerine gruplar.
+
+    Her dizi için en yeni mail temsilci olur; thread_count ve thread_unread
+    dizinin tamamı (filtreden bağımsız, arşiv hariç) üzerinden hesaplanır.
+    """
+    emails = list_emails(category=category, status=status,
+                         account_id=account_id, view=view)
+    with get_db() as db:
+        stats = {
+            (r["account_id"], r["thread_id"]): (r["n"], r["unread"])
+            for r in db.execute(
+                """SELECT account_id, thread_id, COUNT(*) AS n,
+                          SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) AS unread
+                   FROM emails WHERE status != 'archived'
+                   GROUP BY account_id, thread_id"""
+            ).fetchall()
+        }
+    threads, seen = [], set()
+    for e in emails:  # tarih DESC sıralı → ilk görülen temsilcidir
+        key = (e["account_id"], e["thread_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        n, unread = stats.get(key, (1, 0 if e["is_read"] else 1))
+        e["thread_count"] = n
+        e["thread_unread"] = unread
+        threads.append(e)
+    return threads
+
+
+def get_thread(thread_id: str, account_id: int | None) -> list[dict]:
+    """Dizinin tüm mailleri, eskiden yeniye."""
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT e.*, a.email AS account_email, a.display_name AS account_name
+               FROM emails e LEFT JOIN accounts a ON a.id = e.account_id
+               WHERE e.thread_id = ? AND e.account_id IS ?
+               ORDER BY e.date ASC, e.id ASC""",
+            (thread_id, account_id),
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+
+def mark_thread_read(thread_id: str, account_id: int | None):
+    with get_db() as db:
+        db.execute(
+            "UPDATE emails SET is_read = 1 WHERE thread_id = ? AND account_id IS ?",
+            (thread_id, account_id),
+        )
 
 
 def view_counts(account_id: int | None = None) -> dict:

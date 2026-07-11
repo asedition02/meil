@@ -183,6 +183,61 @@ def compose_email(instruction: str, to: str = "", subject: str = "",
     return result
 
 
+THREAD_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {
+            "type": "string",
+            "description": "Yazışmanın Türkçe özeti: konu ne, taraflar ne dedi, son durum ne. 2-5 cümle.",
+        },
+        "action_needed": {
+            "type": "string",
+            "description": (
+                "Kullanıcının yapması gereken somut bir şey varsa tek cümleyle "
+                "(ör. 'Fiyat teklifine yanıt bekleniyor'). Yoksa boş string."
+            ),
+        },
+    },
+    "required": ["summary", "action_needed"],
+    "additionalProperties": False,
+}
+
+
+def summarize_thread(messages: list[dict], user_name: str = "") -> dict:
+    """Bir konuşma dizisinin tamamını özetler ve bekleyen aksiyonu çıkarır."""
+    client = _get_client()
+    system = (
+        "Sen bir e-posta asistanısın. Kullanıcıya bir mail yazışmasının (dizinin) "
+        "tamamını özetliyorsun: konunun ne olduğunu, kimin ne söylediğini ve son "
+        "durumu net biçimde aktar. Özeti her zaman Türkçe yaz."
+    )
+    if user_name:
+        system += f" Kullanıcının adı: {user_name}."
+    parts = []
+    for i, m in enumerate(messages, 1):
+        body = (m.get("body_text") or "")[:6000]
+        parts.append(
+            f"--- MAİL {i}/{len(messages)} ---\n"
+            f"Gönderen: {m.get('sender_name') or ''} <{m.get('sender_email') or ''}>\n"
+            f"Tarih: {m.get('date') or ''}\n"
+            f"Konu: {m.get('subject') or ''}\n\n{body}"
+        )
+    response = client.messages.create(
+        model=config.CLAUDE_MODEL,
+        max_tokens=1024,
+        system=system,
+        output_config={"format": {"type": "json_schema", "schema": THREAD_SCHEMA}},
+        messages=[
+            {
+                "role": "user",
+                "content": "Aşağıdaki mail yazışmasını özetle:\n\n" + "\n\n".join(parts),
+            }
+        ],
+    )
+    text = next(b.text for b in response.content if b.type == "text")
+    return json.loads(text)
+
+
 def regenerate_reply(sender: str, subject: str, date: str, body: str,
                      instruction: str = "", user_name: str = "") -> str:
     """Kullanıcının ek talimatıyla yeni bir yanıt taslağı üretir."""

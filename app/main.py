@@ -240,8 +240,8 @@ class ComposeDraftRequest(BaseModel):
 def list_emails(category: str | None = None, status: str | None = None,
                 account_id: int | None = None, view: str = "inbox"):
     return {
-        "emails": database.list_emails(category=category, status=status,
-                                       account_id=account_id, view=view),
+        "emails": database.list_threads(category=category, status=status,
+                                        account_id=account_id, view=view),
         "counts": database.category_counts(account_id=account_id),
         "views": database.view_counts(account_id=account_id),
         "categories": ai.CATEGORIES,
@@ -330,6 +330,37 @@ def get_email(email_id: int):
     return email_data
 
 
+@app.get("/api/emails/{email_id}/thread")
+def get_email_thread(email_id: int):
+    """Mailin ait olduğu konuşma dizisinin tamamı (eskiden yeniye).
+
+    Dizi açılınca tüm mesajları okundu sayılır.
+    """
+    email_data = database.get_email(email_id)
+    if not email_data:
+        raise HTTPException(status_code=404, detail="Mail bulunamadı")
+    messages = database.get_thread(email_data["thread_id"], email_data["account_id"])
+    database.mark_thread_read(email_data["thread_id"], email_data["account_id"])
+    for m in messages:
+        m["is_read"] = True
+    return {"messages": messages}
+
+
+@app.post("/api/emails/{email_id}/thread-summary")
+def thread_summary(email_id: int):
+    """Dizinin tamamını AI ile özetler."""
+    email_data = database.get_email(email_id)
+    if not email_data:
+        raise HTTPException(status_code=404, detail="Mail bulunamadı")
+    messages = database.get_thread(email_data["thread_id"], email_data["account_id"])
+    if len(messages) < 2:
+        raise HTTPException(status_code=400, detail="Bu mail tek başına; özet zaten mevcut")
+    try:
+        return ai.summarize_thread(messages, config.USER_NAME)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Özet üretilemedi: {e}")
+
+
 @app.post("/api/emails/{email_id}/send")
 def send_reply(email_id: int, req: ReplyRequest):
     """Kullanıcının onayladığı yanıtı, maili alan hesaptan gönderir."""
@@ -355,6 +386,7 @@ def send_reply(email_id: int, req: ReplyRequest):
             subject=email_data["subject"] or "",
             body=req.reply_text,
             in_reply_to=email_data["message_id"],
+            references=email_data.get("refs") or "",
         )
     except (email_client.EmailConfigError, email_client.EmailAuthError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -866,7 +898,7 @@ def dataroom_send(req: SendFileRequest):
 
 
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 8
+API_VERSION = 9
 
 
 @app.get("/api/status")

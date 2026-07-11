@@ -64,6 +64,7 @@ const MI = {
   moon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>',
   sun: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
   x: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+  thread: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2Z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>',
 };
 
 function toast(msg, isError = false) {
@@ -269,12 +270,15 @@ function renderList() {
       const replied = e.status === "replied" ? `<span class="badge replied">✓ yanıtlandı</span>` : "";
       const att = e.attachments.length ? `<span class="badge">${MI.paperclip} ${e.attachments.length}</span>` : "";
       const acct = showAcct && e.account_email ? `<span class="badge acct">${esc(e.account_name || e.account_email)}</span>` : "";
-      const unread = !e.is_read ? " unread" : "";
+      const isUnread = (e.thread_unread || 0) > 0 || !e.is_read;
+      const unread = isUnread ? " unread" : "";
+      const threadBadge = (e.thread_count || 1) > 1
+        ? `<span class="badge thread">${MI.thread} ${e.thread_count}</span>` : "";
       const snoozed = state.activeView === "snoozed" && e.snooze_until
         ? `<span class="badge">${MI.clock} ${formatDateFull(e.snooze_until)}</span>` : "";
       return `
       <div class="email-item${active}${unread}" data-id="${e.id}">
-        ${!e.is_read ? '<span class="unread-dot"></span>' : ""}
+        ${isUnread ? '<span class="unread-dot"></span>' : ""}
         ${avatarHtml(e.sender_name, e.sender_email)}
         <div class="item-body">
           <div class="row1">
@@ -289,7 +293,7 @@ function renderList() {
           <div class="meta">
             <span class="badge cat">${esc(e.category || "")}</span>
             <span class="badge p-${esc(e.priority || "orta")}">${esc(e.priority || "")}</span>
-            ${att}${acct}${replied}${snoozed}
+            ${threadBadge}${att}${acct}${replied}${snoozed}
           </div>
         </div>
       </div>`;
@@ -317,18 +321,25 @@ async function toggleStar(id) {
 
 async function selectEmail(id) {
   state.selectedId = id;
-  const e = await api(`/api/emails/${id}`);
+  const t = await api(`/api/emails/${id}/thread`);
+  const msgs = t.messages;
+  const e = msgs.find((m) => m.id === id) || msgs[msgs.length - 1];
   const local = state.emails.find((x) => x.id === id);
-  if (local && !local.is_read) {
-    local.is_read = true;
-    state.views.unread = Math.max(0, (state.views.unread || 1) - 1);
-    renderUnreadBadge();
+  if (local) {
+    const wasUnread = local.thread_unread || (!local.is_read ? 1 : 0);
+    if (wasUnread) {
+      local.is_read = true;
+      local.thread_unread = 0;
+      state.views.unread = Math.max(0, (state.views.unread || 0) - wasUnread);
+      renderUnreadBadge();
+    }
   }
   renderList();
-  renderDetail(e);
+  renderDetail(e, msgs);
 }
 
-function renderDetail(e) {
+function renderDetail(e, threadMsgs = []) {
+  const thread = threadMsgs.length > 1 ? threadMsgs : null;
   const attachments = e.attachments.length
     ? `<div class="card"><h3>${MI.paperclip} Ekler — dataroom'a kaydedildi</h3><div class="attachment-list">
         ${e.attachments.map((a) => `<a href="/api/dataroom/download?path=${encodeURIComponent(a.path)}">${esc(a.filename)} <span class="size">${formatSize(a.size)}</span></a>`).join("")}
@@ -375,7 +386,11 @@ function renderDetail(e) {
         <button class="icon-btn" id="d-archive" title="${e.status === "archived" ? "Gelen kutusuna taşı" : "Arşivle (e)"}" aria-label="Arşivle">${e.status === "archived" ? MI.unarchive : MI.archive}</button>
       </div>
     </div>
-    <div class="card summary-card"><h3>${MI.sparkle} AI Özeti</h3><p>${esc(e.summary || "")}</p></div>
+    <div class="card summary-card">
+      <h3>${MI.sparkle} AI Özeti</h3>
+      <p>${esc(e.summary || "")}</p>
+      ${thread ? `<div id="thread-sum-holder"><button class="pill ghost" id="thread-sum-btn">${MI.thread} Tüm Yazışmayı Özetle (${thread.length} mail)</button></div>` : ""}
+    </div>
     ${eventCard}
     ${attachments}
     <div class="card">
@@ -388,8 +403,51 @@ function renderDetail(e) {
         <button class="pill ghost" id="archive-btn">Arşivle</button>
       </div>
     </div>
-    <div class="card"><h3>Mail İçeriği</h3><div class="body-text">${esc(e.body_text || "(içerik yok)")}</div></div>
+    ${thread
+      ? `<div class="card">
+          <h3>${MI.thread} Yazışma — ${thread.length} mail</h3>
+          <div class="thread-list">
+            ${thread.map((m, i) => {
+              const open = i === thread.length - 1 ? " open" : "";
+              return `<div class="thread-msg${open}">
+                <div class="tm-head" role="button" tabindex="0">
+                  ${avatarHtml(m.sender_name, m.sender_email)}
+                  <div class="tm-who">
+                    <span class="tm-from">${esc(m.sender_name || m.sender_email)}</span>
+                    <span class="tm-snippet">${esc((m.body_text || "").replace(/\s+/g, " ").slice(0, 110))}</span>
+                  </div>
+                  <span class="tm-time">${formatDateFull(m.date)}</span>
+                </div>
+                <div class="tm-body body-text">${esc(m.body_text || "(içerik yok)")}</div>
+              </div>`;
+            }).join("")}
+          </div>
+        </div>`
+      : `<div class="card"><h3>Mail İçeriği</h3><div class="body-text">${esc(e.body_text || "(içerik yok)")}</div></div>`}
   `;
+
+  document.querySelectorAll(".thread-msg .tm-head").forEach((head) => {
+    const toggle = () => head.parentElement.classList.toggle("open");
+    head.onclick = toggle;
+    head.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); } };
+  });
+
+  const tsBtn = $("#thread-sum-btn");
+  if (tsBtn) tsBtn.onclick = async () => {
+    tsBtn.disabled = true;
+    tsBtn.textContent = "Özetleniyor...";
+    try {
+      const s = await api(`/api/emails/${e.id}/thread-summary`, { method: "POST" });
+      $("#thread-sum-holder").innerHTML = `<div class="thread-summary">
+        <p>${esc(s.summary)}</p>
+        ${s.action_needed ? `<p class="ts-action">${MI.hourglass} ${esc(s.action_needed)}</p>` : ""}
+      </div>`;
+    } catch (err) {
+      toast(err.message, true);
+      tsBtn.disabled = false;
+      tsBtn.innerHTML = MI.thread + ` Tüm Yazışmayı Özetle (${thread.length} mail)`;
+    }
+  };
 
   $("#send-btn").onclick = async () => {
     const text = $("#reply-text").value.trim();
@@ -1587,7 +1645,7 @@ $("#cal-src-add").onclick = async () => {
 
 (async function init() {
   try {
-    const EXPECTED_API_VERSION = 8;
+    const EXPECTED_API_VERSION = 9;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);

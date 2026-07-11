@@ -287,6 +287,40 @@ body {
 }
 .summary-card h3 { color: var(--accent-text); }
 .summary-card p { font-size: 14.5px; line-height: 1.55; }
+#thread-sum-holder { margin-top: 12px; }
+.thread-summary {
+  padding: 12px 14px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-size: 13.5px; line-height: 1.55;
+}
+.thread-summary .ts-action {
+  margin-top: 8px; font-weight: 650; color: var(--accent-text);
+  display: flex; align-items: center; gap: 6px; font-size: 13px;
+}
+
+/* Konuşma dizisi (thread) */
+.badge.thread { color: var(--accent-text); background: var(--accent-soft); }
+.thread-list { display: flex; flex-direction: column; gap: 8px; }
+.thread-msg {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--panel); overflow: hidden;
+}
+.thread-msg .tm-head {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  cursor: pointer; transition: background 0.15s;
+}
+.thread-msg .tm-head:hover { background: var(--panel-2); }
+.thread-msg .tm-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tm-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tm-from { font-weight: 650; font-size: 13.5px; }
+.tm-snippet {
+  font-size: 12px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.thread-msg.open .tm-snippet { display: none; }
+.tm-time { font-family: "Fira Code", monospace; font-size: 10.5px; color: var(--muted); flex-shrink: 0; }
+.thread-msg .tm-body { display: none; padding: 0 12px 14px 12px; border-top: 1px solid var(--border); padding-top: 12px; }
+.thread-msg.open { border-color: var(--accent); }
+.thread-msg.open .tm-body { display: block; }
 
 textarea#reply-text {
   width: 100%; min-height: 170px; padding: 14px; font-size: 14px; line-height: 1.55;

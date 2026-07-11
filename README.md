@@ -73,6 +73,7 @@ Gmail (IMAP) ──► Mail çekilir ──► Ekler dataroom'a kaydedilir
 ```
 
 - Mailler yalnızca **okunur** modda çekilir; gelen kutunuzda hiçbir şey değişmez (okundu işareti dahil).
+- Aynı konudaki mailler `References`/`In-Reply-To` başlıklarına göre **konuşma dizisi** olarak gruplanır; listede tek satır görünür, detayda tüm yazışma sıralanır ve AI'ya dizinin tamamı özetletilebilir.
 - Yanıtlar yalnızca sizin onayınızla, sizin hesabınızdan `Re:` konusuyla ve doğru konu dizisi (thread) referansıyla gönderilir.
 - Tüm veriler yerel `data/` klasöründe tutulur (SQLite + dosyalar).
 
