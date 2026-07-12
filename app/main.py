@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai, calendar_client, config, database, dataroom, email_client
+from . import ai, calendar_client, config, database, dataroom, email_client, extract
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("meil")
@@ -154,6 +154,8 @@ def _sync_account(account: dict) -> dict:
         raw_attachments = msg.pop("raw_attachments", [])
         saved = dataroom.save_attachments(msg["sender_email"], msg["date"], raw_attachments)
         msg["attachments"] = saved
+        for a in saved:
+            _index_file_text(a["path"])  # ekler içerik aramasına hemen girsin
         try:
             triage = ai.triage_email(
                 sender=f"{msg['sender_name']} <{msg['sender_email']}>",
@@ -675,6 +677,10 @@ def dataroom_files():
         f["share_token"] = m.get("share_token")
         f["share_expires"] = m.get("share_expires")
         f["share_downloads"] = m.get("share_downloads") or 0
+        f["doc_type"] = m.get("doc_type") or ""
+        f["doc_date"] = m.get("doc_date") or ""
+        f["doc_amount"] = m.get("doc_amount") or ""
+        f["ai_summary"] = m.get("ai_summary") or ""
         if f["share_token"]:
             shared_count += 1
         total_size += f["size"]
@@ -711,10 +717,90 @@ async def dataroom_upload(files: list[UploadFile] = File(...), folder: str = For
             continue
         s = dataroom.save_upload(target_folder, f.filename, content)
         database.log_activity("upload", s["path"])
+        _index_file_text(s["path"])  # içerik araması için hemen dizinle
         saved.append(s)
     if not saved:
         raise HTTPException(status_code=400, detail="Yüklenecek dosya yok")
     return {"ok": True, "files": saved}
+
+
+def _index_file_text(rel_path: str) -> bool:
+    """Dosyanın metnini çıkarıp arama dizinine yazar; metin bulunduysa True."""
+    try:
+        target = dataroom.resolve_file(rel_path)
+    except FileNotFoundError:
+        return False
+    text = extract.extract_text(target)
+    database.upsert_file_text(rel_path, text, target.stat().st_mtime)
+    return bool(text)
+
+
+class IndexRequest(BaseModel):
+    force: bool = False       # True: analiz edilmişleri de yeniden AI'dan geçir
+    max_ai: int = 20          # tek seferde AI'ya gönderilecek en fazla dosya
+
+
+@app.post("/api/dataroom/index")
+def dataroom_index(req: IndexRequest):
+    """Tüm dosyaları tarar: metin çıkarır, AI ile tür/özet/etiket/fatura analizi yapar."""
+    files = dataroom.list_files()
+    meta = database.all_file_meta()
+    extracted, analyzed, ai_errors = 0, 0, []
+    ai_budget = req.max_ai if config.ANTHROPIC_API_KEY else 0
+    for f in files:
+        path = f["path"]
+        # 1) Metin çıkarma — dosya değişmediyse atla
+        if database.get_text_mtime(path) != f["modified"]:
+            target = dataroom.resolve_file(path)
+            text = extract.extract_text(target)
+            database.upsert_file_text(path, text, f["modified"])
+            if text:
+                extracted += 1
+        # 2) AI analizi — metni olan, henüz analiz edilmemiş dosyalar
+        m = meta.get(path, {})
+        if ai_budget <= 0 or (m.get("doc_type") and not req.force):
+            continue
+        text = database.get_file_text(path)
+        if not text:
+            continue
+        try:
+            result = ai.analyze_document(f["filename"], text)
+        except Exception as e:
+            ai_errors.append(f"{f['filename']}: {e}")
+            continue
+        inv = result.get("invoice") or {}
+        amount = ""
+        if inv.get("exists") and inv.get("amount"):
+            amount = f"{inv['amount']} {inv.get('currency', '')}".strip()
+            if inv.get("due_date"):
+                amount += f" · son ödeme {inv['due_date']}"
+        database.set_doc_analysis(
+            path,
+            doc_type=result.get("doc_type") or "",
+            doc_date=result.get("doc_date") or "",
+            doc_amount=amount,
+            ai_summary=result.get("summary") or "",
+        )
+        if not (m.get("tags") or "").strip():
+            database.set_file_tags(path, ", ".join(result.get("tags") or []))
+        analyzed += 1
+        ai_budget -= 1
+    database.log_activity("index", "", detail=f"{extracted} metin, {analyzed} AI analizi")
+    return {
+        "ok": True,
+        "extracted": extracted,
+        "analyzed": analyzed,
+        "ai_enabled": bool(config.ANTHROPIC_API_KEY),
+        "errors": ai_errors,
+    }
+
+
+@app.get("/api/dataroom/search")
+def dataroom_search(q: str):
+    """Dosya içeriklerinde tam metin arama; eşleşme parçacıklarıyla döner."""
+    if not q.strip():
+        return {"results": []}
+    return {"results": database.search_file_contents(q.strip())}
 
 
 @app.post("/api/dataroom/folder")
@@ -731,6 +817,7 @@ def dataroom_move(req: MoveRequest):
     _resolve_or_404(req.path)
     new_path = dataroom.move_file(req.path, req.folder)
     database.update_meta_path(req.path, new_path)
+    database.update_text_path(req.path, new_path)
     database.log_activity("move", new_path, detail=f"{req.path} → {new_path}")
     return {"ok": True, "path": new_path}
 
@@ -740,6 +827,7 @@ def dataroom_delete(path: str):
     _resolve_or_404(path)
     dataroom.delete_file(path)
     database.delete_file_meta(path)
+    database.delete_file_text(path)
     database.log_activity("delete", path)
     return {"ok": True}
 
@@ -751,6 +839,7 @@ def dataroom_bulk_delete(req: BulkDeleteRequest):
         try:
             dataroom.delete_file(path)
             database.delete_file_meta(path)
+            database.delete_file_text(path)
             database.log_activity("delete", path)
             deleted += 1
         except FileNotFoundError:
@@ -898,7 +987,7 @@ def dataroom_send(req: SendFileRequest):
 
 
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 9
+API_VERSION = 10
 
 
 @app.get("/api/status")

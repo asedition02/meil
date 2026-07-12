@@ -731,6 +731,7 @@ const dr = {
   files: [], folders: [], activity: [], stats: {},
   folder: "", search: "", sort: "date", type: "all", favOnly: false,
   selected: new Set(), inspectorPath: null,
+  contentHits: new Map(), searchSeq: 0,  // içerik araması: path → eşleşme parçası
 };
 
 // Lucide tarzı satır içi SVG ikonlar (emoji yok — skill kuralı)
@@ -877,7 +878,9 @@ function visibleDrFiles() {
   if (dr.search) {
     const q = dr.search.toLowerCase();
     files = files.filter((f) =>
-      [f.filename, f.folder, f.note, (f.tags || []).join(" ")].join(" ").toLowerCase().includes(q));
+      [f.filename, f.folder, f.note, f.doc_type, f.ai_summary, (f.tags || []).join(" ")]
+        .join(" ").toLowerCase().includes(q)
+      || dr.contentHits.has(f.path));
   }
   if (dr.sort === "name") files = [...files].sort((a, b) => a.filename.localeCompare(b.filename, "tr"));
   else if (dr.sort === "size") files = [...files].sort((a, b) => b.size - a.size);
@@ -947,10 +950,13 @@ function renderDataroom() {
                 <div class="dr-file-info">
                   <span class="dr-file-name">${esc(f.filename)}</span>
                   <span class="dr-file-sub">
+                    ${f.doc_type ? `<span class="dr-doctype">${esc(f.doc_type)}</span>` : ""}
+                    ${f.doc_amount ? `<span class="dr-amount">${esc(f.doc_amount)}</span>` : ""}
                     ${f.share_token ? `<span class="dr-shared">${DRI.link} paylaşımda${f.share_downloads ? ` · ${f.share_downloads}` : ""}</span>` : ""}
                     ${(f.tags || []).map((t) => `<span class="dr-tag">${esc(t)}</span>`).join("")}
                     ${f.note ? `<span class="dr-note-preview">${esc(f.note)}</span>` : ""}
                   </span>
+                  ${dr.search && dr.contentHits.has(f.path) ? `<span class="dr-snippet">${snippetHtml(dr.contentHits.get(f.path))}</span>` : ""}
                 </div>
               </div>
             </td>
@@ -990,8 +996,52 @@ function renderDataroom() {
   });
 }
 
-$("#dataroom-search").oninput = (e) => { dr.search = e.target.value; renderDataroom(); };
+function snippetHtml(s) {
+  // Sunucu eşleşmeyi [[..]] ile işaretler; önce kaçır, sonra vurguya çevir
+  return esc(s).replaceAll("[[", "<mark>").replaceAll("]]", "</mark>");
+}
+
+let drSearchTimer = null;
+$("#dataroom-search").oninput = (e) => {
+  dr.search = e.target.value;
+  renderDataroom();
+  clearTimeout(drSearchTimer);
+  const q = dr.search.trim();
+  if (q.length < 2) {
+    if (dr.contentHits.size) { dr.contentHits.clear(); renderDataroom(); }
+    return;
+  }
+  drSearchTimer = setTimeout(async () => {
+    const seq = ++dr.searchSeq;
+    try {
+      const data = await api(`/api/dataroom/search?q=${encodeURIComponent(q)}`);
+      if (seq !== dr.searchSeq) return;  // eskimiş yanıtı at
+      dr.contentHits = new Map(data.results.map((r) => [r.path, r.snippet]));
+      renderDataroom();
+    } catch { /* içerik araması isteğe bağlı — sessizce geç */ }
+  }, 300);
+};
 $("#dr-sort").onchange = (e) => { dr.sort = e.target.value; renderDataroom(); };
+
+$("#dr-index-btn").onclick = async () => {
+  const btn = $("#dr-index-btn");
+  const old = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = "Taranıyor...";
+  try {
+    const r = await api("/api/dataroom/index", { method: "POST", body: JSON.stringify({}) });
+    let msg = `${r.extracted} dosyadan metin çıkarıldı, ${r.analyzed} dosya AI ile analiz edildi`;
+    if (!r.ai_enabled) msg += " — AI analizi için ANTHROPIC_API_KEY gerekli";
+    if (r.errors.length) msg += ` (${r.errors.length} hata)`;
+    toast(msg, false);
+    loadDataroom();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = old;
+  }
+};
 
 // ---- Sağ panel: dosya inceleme (inspector) ----
 
@@ -1045,6 +1095,20 @@ async function openInspector(file, rerenderTable = true) {
       <button class="dr-btn" id="insp-send">${DRI.send}<span>Mail At</span></button>
       <button class="dr-btn" id="insp-move">${DRI.move}<span>Taşı</span></button>
       <button class="dr-btn danger" id="insp-delete">${DRI.trash}<span>Sil</span></button>
+    </div>
+
+    <div class="dr-insp-section">
+      <h4>AI Analizi</h4>
+      ${file.doc_type || file.ai_summary
+        ? `<div class="dr-ai-box">
+            <div class="dr-ai-meta">
+              ${file.doc_type ? `<span class="dr-doctype">${esc(file.doc_type)}</span>` : ""}
+              ${file.doc_date ? `<span class="dr-muted dr-mono">${esc(file.doc_date)}</span>` : ""}
+            </div>
+            ${file.doc_amount ? `<div class="dr-amount lg">${esc(file.doc_amount)}</div>` : ""}
+            ${file.ai_summary ? `<p>${esc(file.ai_summary)}</p>` : ""}
+          </div>`
+        : `<p class="dr-hint">Henüz analiz edilmedi — araç çubuğundaki "AI Tara" tüm arşivden metin çıkarır ve belgeleri sınıflandırır.</p>`}
     </div>
 
     <div class="dr-insp-section">
@@ -1645,7 +1709,7 @@ $("#cal-src-add").onclick = async () => {
 
 (async function init() {
   try {
-    const EXPECTED_API_VERSION = 9;
+    const EXPECTED_API_VERSION = 10;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);

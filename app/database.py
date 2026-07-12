@@ -1,5 +1,6 @@
 """SQLite veri katmanı."""
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 
@@ -84,7 +85,18 @@ CREATE TABLE IF NOT EXISTS dataroom_meta (
     share_token TEXT UNIQUE,
     share_expires TEXT,                 -- ISO tarih; NULL = süresiz
     share_downloads INTEGER DEFAULT 0,
+    doc_type TEXT,                      -- AI analizi: Fatura | Sözleşme | ...
+    doc_date TEXT,                      -- belgenin kendi tarihi (YYYY-MM-DD)
+    doc_amount TEXT,                    -- fatura ise tutar + para birimi
+    ai_summary TEXT,                    -- AI'nın 1-2 cümlelik özeti
     created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS dataroom_text (
+    path TEXT PRIMARY KEY,              -- dosya yolu
+    content TEXT,                       -- çıkarılan düz metin
+    mtime REAL,                         -- kaynağın değişim zamanı (yeniden tarama için)
+    extracted_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS dataroom_activity (
@@ -166,12 +178,34 @@ def _migrate(db: sqlite3.Connection):
             "ALTER TABLE dataroom_meta ADD COLUMN share_downloads INTEGER DEFAULT 0",
         ):
             db.execute(stmt)
+    if meta_cols and "doc_type" not in meta_cols:
+        # içerik arama / AI analiz öncesi şema → belge analizi sütunları
+        for stmt in (
+            "ALTER TABLE dataroom_meta ADD COLUMN doc_type TEXT",
+            "ALTER TABLE dataroom_meta ADD COLUMN doc_date TEXT",
+            "ALTER TABLE dataroom_meta ADD COLUMN doc_amount TEXT",
+            "ALTER TABLE dataroom_meta ADD COLUMN ai_summary TEXT",
+        ):
+            db.execute(stmt)
+
+
+FTS_AVAILABLE = False
 
 
 def init_db():
+    global FTS_AVAILABLE
     with get_db() as db:
         _migrate(db)
         db.executescript(SCHEMA)
+        try:
+            db.execute(
+                """CREATE VIRTUAL TABLE IF NOT EXISTS dataroom_fts
+                   USING fts5(path UNINDEXED, content,
+                              tokenize='unicode61 remove_diacritics 2')"""
+            )
+            FTS_AVAILABLE = True
+        except sqlite3.OperationalError:
+            FTS_AVAILABLE = False  # FTS5 yoksa LIKE aramasına düşülür
 
 
 # ---- Hesaplar ----
@@ -355,7 +389,8 @@ def all_file_meta() -> dict:
     with get_db() as db:
         rows = db.execute(
             """SELECT path, note, tags, favorite, share_token, share_expires,
-                      share_downloads FROM dataroom_meta"""
+                      share_downloads, doc_type, doc_date, doc_amount, ai_summary
+               FROM dataroom_meta"""
         ).fetchall()
         return {
             r["path"]: {
@@ -365,6 +400,10 @@ def all_file_meta() -> dict:
                 "share_token": r["share_token"],
                 "share_expires": r["share_expires"],
                 "share_downloads": r["share_downloads"] or 0,
+                "doc_type": r["doc_type"],
+                "doc_date": r["doc_date"],
+                "doc_amount": r["doc_amount"],
+                "ai_summary": r["ai_summary"],
             }
             for r in rows
         }
@@ -446,6 +485,103 @@ def update_meta_path(old_path: str, new_path: str):
 def delete_file_meta(path: str):
     with get_db() as db:
         db.execute("DELETE FROM dataroom_meta WHERE path = ?", (path,))
+
+
+# ---- Dataroom içerik dizini (metin çıkarma + içerik arama) ----
+
+def get_text_mtime(path: str) -> float | None:
+    with get_db() as db:
+        row = db.execute("SELECT mtime FROM dataroom_text WHERE path = ?", (path,)).fetchone()
+        return row["mtime"] if row else None
+
+
+def upsert_file_text(path: str, content: str, mtime: float):
+    with get_db() as db:
+        db.execute(
+            """INSERT INTO dataroom_text (path, content, mtime, extracted_at)
+               VALUES (?, ?, ?, datetime('now'))
+               ON CONFLICT(path) DO UPDATE SET
+                   content = excluded.content, mtime = excluded.mtime,
+                   extracted_at = excluded.extracted_at""",
+            (path, content, mtime),
+        )
+        if FTS_AVAILABLE:
+            db.execute("DELETE FROM dataroom_fts WHERE path = ?", (path,))
+            if content:
+                db.execute("INSERT INTO dataroom_fts (path, content) VALUES (?, ?)",
+                           (path, content))
+
+
+def get_file_text(path: str) -> str:
+    with get_db() as db:
+        row = db.execute("SELECT content FROM dataroom_text WHERE path = ?", (path,)).fetchone()
+        return (row["content"] or "") if row else ""
+
+
+def delete_file_text(path: str):
+    with get_db() as db:
+        db.execute("DELETE FROM dataroom_text WHERE path = ?", (path,))
+        if FTS_AVAILABLE:
+            db.execute("DELETE FROM dataroom_fts WHERE path = ?", (path,))
+
+
+def update_text_path(old_path: str, new_path: str):
+    with get_db() as db:
+        db.execute("UPDATE dataroom_text SET path = ? WHERE path = ?", (new_path, old_path))
+        if FTS_AVAILABLE:
+            row = db.execute("SELECT content FROM dataroom_text WHERE path = ?",
+                             (new_path,)).fetchone()
+            db.execute("DELETE FROM dataroom_fts WHERE path = ?", (old_path,))
+            if row and row["content"]:
+                db.execute("INSERT INTO dataroom_fts (path, content) VALUES (?, ?)",
+                           (new_path, row["content"]))
+
+
+def search_file_contents(q: str, limit: int = 50) -> list[dict]:
+    """Dosya içeriklerinde arama; [{path, snippet}] döner. Eşleşme [[..]] ile işaretli."""
+    tokens = re.findall(r"\w+", q, re.UNICODE)[:8]
+    if not tokens:
+        return []
+    with get_db() as db:
+        if FTS_AVAILABLE:
+            match = " ".join(f'"{t}"*' for t in tokens)  # önek araması, TR karakter güvenli
+            try:
+                rows = db.execute(
+                    """SELECT path, snippet(dataroom_fts, 1, '[[', ']]', ' … ', 10) AS snip
+                       FROM dataroom_fts WHERE dataroom_fts MATCH ? LIMIT ?""",
+                    (match, limit),
+                ).fetchall()
+                return [{"path": r["path"], "snippet": r["snip"]} for r in rows]
+            except sqlite3.OperationalError:
+                pass  # sorgu FTS'i kızdırırsa LIKE'a düş
+        results = []
+        rows = db.execute("SELECT path, content FROM dataroom_text WHERE content != ''").fetchall()
+        low_tokens = [t.lower() for t in tokens]
+        for r in rows:
+            content_low = (r["content"] or "").lower()
+            positions = [content_low.find(t) for t in low_tokens]
+            if any(p < 0 for p in positions):
+                continue
+            first = min(positions)
+            start = max(0, first - 60)
+            snip = r["content"][start:first + 90].replace("\n", " ")
+            results.append({"path": r["path"], "snippet": " … " + snip + " … "})
+            if len(results) >= limit:
+                break
+        return results
+
+
+def set_doc_analysis(path: str, doc_type: str, doc_date: str,
+                     doc_amount: str, ai_summary: str):
+    with get_db() as db:
+        db.execute(
+            """INSERT INTO dataroom_meta (path, doc_type, doc_date, doc_amount, ai_summary)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(path) DO UPDATE SET
+                   doc_type = excluded.doc_type, doc_date = excluded.doc_date,
+                   doc_amount = excluded.doc_amount, ai_summary = excluded.ai_summary""",
+            (path, doc_type, doc_date, doc_amount, ai_summary),
+        )
 
 
 # ---- Dataroom etkinlik günlüğü ----

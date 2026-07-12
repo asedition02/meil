@@ -183,6 +183,70 @@ def compose_email(instruction: str, to: str = "", subject: str = "",
     return result
 
 
+DOC_TYPES = ["Fatura", "Sözleşme", "Dekont/Makbuz", "Teklif", "Rapor",
+             "Sunum", "CV/Özgeçmiş", "Resmi Yazı", "Diğer"]
+
+DOC_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "doc_type": {"type": "string", "enum": DOC_TYPES},
+        "summary": {
+            "type": "string",
+            "description": "Belgenin 1-2 cümlelik Türkçe özeti: ne belgesi, kimden/kime, ne hakkında.",
+        },
+        "tags": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "2-5 kısa, küçük harfli Türkçe etiket (ör. kira, sözleşme, 2026).",
+        },
+        "doc_date": {
+            "type": "string",
+            "description": "Belgenin kendi tarihi (fatura/sözleşme tarihi) YYYY-MM-DD. Yoksa boş string.",
+        },
+        "invoice": {
+            "type": "object",
+            "description": "Belge bir fatura/dekont/ödeme talebi ise tutar bilgileri.",
+            "properties": {
+                "exists": {"type": "boolean"},
+                "amount": {"type": "string", "description": "Toplam tutar, ör. '1.250,00'. Yoksa boş."},
+                "currency": {"type": "string", "description": "TRY, USD, EUR... Yoksa boş."},
+                "due_date": {"type": "string", "description": "Son ödeme tarihi YYYY-MM-DD; yoksa boş."},
+                "issuer": {"type": "string", "description": "Faturayı kesen kurum; yoksa boş."},
+            },
+            "required": ["exists", "amount", "currency", "due_date", "issuer"],
+            "additionalProperties": False,
+        },
+    },
+    "required": ["doc_type", "summary", "tags", "doc_date", "invoice"],
+    "additionalProperties": False,
+}
+
+
+def analyze_document(filename: str, text: str) -> dict:
+    """Belge metnini sınıflandırır: tür, özet, etiketler, tarih ve fatura alanları."""
+    client = _get_client()
+    system = (
+        "Sen bir belge asistanısın. Kullanıcının belge arşivindeki (dataroom) dosyaları "
+        "analiz ediyorsun: belge türünü belirle, kısa Türkçe özet çıkar, arama için "
+        "etiketler öner. Fatura/dekont ise tutar, para birimi, son ödeme tarihi ve "
+        "kesen kurumu çıkar. Emin olamadığın alanları boş bırak; asla uydurma."
+    )
+    response = client.messages.create(
+        model=config.CLAUDE_MODEL,
+        max_tokens=1024,
+        system=system,
+        output_config={"format": {"type": "json_schema", "schema": DOC_SCHEMA}},
+        messages=[
+            {
+                "role": "user",
+                "content": f"Dosya adı: {filename}\n\n--- BELGE METNİ ---\n{text[:20000]}",
+            }
+        ],
+    )
+    out = next(b.text for b in response.content if b.type == "text")
+    return json.loads(out)
+
+
 THREAD_SCHEMA = {
     "type": "object",
     "properties": {

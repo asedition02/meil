@@ -7,3 +7,4 @@ icalendar>=5.0
 recurring-ical-events>=2.1
 requests>=2.31
 python-multipart>=0.0.9
+pypdf>=4.0

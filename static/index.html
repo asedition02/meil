@@ -161,13 +161,17 @@
           <div class="dr-toolbar-actions">
             <div class="dr-search">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-              <input id="dataroom-search" placeholder="Dosya, etiket, not ara">
+              <input id="dataroom-search" placeholder="Dosya, etiket, içerik ara">
             </div>
             <select id="dr-sort" class="dr-select" aria-label="Sıralama">
               <option value="date">Yeniden eskiye</option>
               <option value="name">Ada göre</option>
               <option value="size">Boyuta göre</option>
             </select>
+            <button class="dr-btn" id="dr-index-btn" title="Belgelerden metin çıkarır, AI ile tür/özet/fatura analizi yapar">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3m9-9h-3M6 12H3m14.5-6.5-2 2m-9 9-2 2m13 0-2-2m-9-9-2-2"/><circle cx="12" cy="12" r="3"/></svg>
+              <span>AI Tara</span>
+            </button>
             <input id="upload-input" type="file" multiple style="display:none">
             <button class="dr-btn primary" id="upload-btn">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4m0 0 4 4m-4-4-4 4M4 20h16"/></svg>
