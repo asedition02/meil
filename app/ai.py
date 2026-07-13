@@ -247,6 +247,75 @@ def analyze_document(filename: str, text: str) -> dict:
     return json.loads(out)
 
 
+CHAT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "answer": {
+            "type": "string",
+            "description": "Sorunun Türkçe yanıtı. Yalnızca verilen maillere dayan; "
+                           "bilgi yoksa açıkça 'maillerde bulamadım' de.",
+        },
+        "source_ids": {
+            "type": "array",
+            "items": {"type": "integer"},
+            "description": "Yanıtı dayandırdığın maillerin ID'leri (bağlamda [ID n] olarak verildi). "
+                           "Yanıt maillere dayanmıyorsa boş bırak.",
+        },
+    },
+    "required": ["answer", "source_ids"],
+    "additionalProperties": False,
+}
+
+
+def answer_inbox_question(question: str, emails: list[dict],
+                          history: list[dict] | None = None,
+                          user_name: str = "", today: str = "") -> dict:
+    """Gelen kutusu hakkındaki soruyu, bulunan maillere dayanarak yanıtlar."""
+    client = _get_client()
+    system = (
+        "Sen kullanıcının e-posta asistanısın. Kullanıcı gelen kutusu hakkında soru "
+        "soruyor; sana sorusuyla ilgili bulunabilen mailler veriliyor.\n"
+        "- YALNIZCA verilen maillere dayan; uydurma, tahmin etme.\n"
+        "- Yanıtı her zaman Türkçe, kısa ve net yaz; tarih/tutar/isim gibi somut "
+        "bilgileri aynen aktar.\n"
+        "- Sorunun yanıtı maillerde yoksa bunu açıkça söyle.\n"
+        "- source_ids alanına yalnızca gerçekten kullandığın maillerin ID'lerini koy."
+    )
+    if user_name:
+        system += f"\n- Kullanıcının adı: {user_name}."
+    if today:
+        system += f"\n- Bugünün tarihi: {today}."
+    parts = []
+    for m in emails:
+        body = (m.get("body_text") or "")[:1500]
+        parts.append(
+            f"[ID {m['id']}] Kimden: {m.get('sender_name') or ''} <{m.get('sender_email') or ''}> | "
+            f"Tarih: {m.get('date') or ''} | Konu: {m.get('subject') or ''} | "
+            f"Durum: {m.get('status') or ''}\n"
+            f"Özet: {m.get('summary') or ''}\nİçerik: {body}"
+        )
+    context = "\n\n".join(parts) if parts else "(İlgili mail bulunamadı.)"
+    messages = []
+    for h in (history or [])[-6:]:
+        role = h.get("role")
+        content = (h.get("content") or "").strip()
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+    messages.append({
+        "role": "user",
+        "content": f"--- GELEN KUTUSUNDAN İLGİLİ MAİLLER ---\n{context}\n\n--- SORU ---\n{question}",
+    })
+    response = client.messages.create(
+        model=config.CLAUDE_MODEL,
+        max_tokens=1024,
+        system=system,
+        output_config={"format": {"type": "json_schema", "schema": CHAT_SCHEMA}},
+        messages=messages,
+    )
+    text = next(b.text for b in response.content if b.type == "text")
+    return json.loads(text)
+
+
 THREAD_SCHEMA = {
     "type": "object",
     "properties": {

@@ -208,7 +208,22 @@ def init_db():
                    USING fts5(path UNINDEXED, content,
                               tokenize='unicode61 remove_diacritics 2')"""
             )
+            db.execute(
+                """CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts
+                   USING fts5(email_id UNINDEXED, sender, subject, summary, body,
+                              tokenize='unicode61 remove_diacritics 2')"""
+            )
             FTS_AVAILABLE = True
+            # Geriye dönük doldurma: FTS boş ama mail varsa dizinle
+            n_fts = db.execute("SELECT COUNT(*) AS n FROM emails_fts").fetchone()["n"]
+            if n_fts == 0:
+                db.execute(
+                    """INSERT INTO emails_fts (email_id, sender, subject, summary, body)
+                       SELECT id, COALESCE(sender_name,'') || ' ' || COALESCE(sender_email,''),
+                              COALESCE(subject,''), COALESCE(summary,''),
+                              substr(COALESCE(body_text,''), 1, 20000)
+                       FROM emails"""
+                )
         except sqlite3.OperationalError:
             FTS_AVAILABLE = False  # FTS5 yoksa LIKE aramasına düşülür
         _encrypt_legacy_secrets(db)
@@ -704,6 +719,18 @@ def insert_email(data: dict) -> int:
                 thread_id,
             ),
         )
+        if FTS_AVAILABLE:
+            db.execute(
+                """INSERT INTO emails_fts (email_id, sender, subject, summary, body)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    cur.lastrowid,
+                    f"{data.get('sender_name') or ''} {data.get('sender_email') or ''}",
+                    data.get("subject") or "",
+                    data.get("summary") or "",
+                    (data.get("body_text") or "")[:20000],
+                ),
+            )
         return cur.lastrowid
 
 
@@ -797,6 +824,58 @@ def mark_thread_read(thread_id: str, account_id: int | None):
             "UPDATE emails SET is_read = 1 WHERE thread_id = ? AND account_id IS ?",
             (thread_id, account_id),
         )
+
+
+def search_emails_for_chat(question: str, limit: int = 12) -> list[dict]:
+    """Soruyla ilgili mailleri bulur (AI sohbeti için bağlam).
+
+    FTS eşleşmeleri (bm25 sıralı) + her durumda en yeni birkaç mail; böylece
+    "son gelen mail ne?" gibi anahtar kelimesiz sorular da bağlam bulur.
+    """
+    tokens = re.findall(r"\w{2,}", question, re.UNICODE)[:10]
+    ids: list[int] = []
+    with get_db() as db:
+        if FTS_AVAILABLE and tokens:
+            # Kesişim yerine herhangi-biri (OR): sorudaki gereksiz kelimeler
+            # ("acaba", "neydi") eşleşmeyi tamamen boşa düşürmesin
+            match = " OR ".join(f'"{t}"*' for t in tokens)
+            try:
+                rows = db.execute(
+                    """SELECT email_id FROM emails_fts
+                       WHERE emails_fts MATCH ? ORDER BY bm25(emails_fts) LIMIT ?""",
+                    (match, limit),
+                ).fetchall()
+                ids = [r["email_id"] for r in rows]
+            except sqlite3.OperationalError:
+                ids = []
+        if not ids and tokens:
+            like = f"%{tokens[0]}%"
+            rows = db.execute(
+                """SELECT id FROM emails
+                   WHERE subject LIKE ? OR body_text LIKE ? OR sender_name LIKE ?
+                   ORDER BY date DESC LIMIT ?""",
+                (like, like, like, limit),
+            ).fetchall()
+            ids = [r["id"] for r in rows]
+        # En yeni mailleri her zaman ekle (tekrarsız)
+        recent = db.execute(
+            "SELECT id FROM emails ORDER BY date DESC, id DESC LIMIT 5"
+        ).fetchall()
+        for r in recent:
+            if r["id"] not in ids:
+                ids.append(r["id"])
+        ids = ids[: limit + 5]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = db.execute(
+            f"""SELECT e.*, a.email AS account_email, a.display_name AS account_name
+                FROM emails e LEFT JOIN accounts a ON a.id = e.account_id
+                WHERE e.id IN ({placeholders})""",
+            ids,
+        ).fetchall()
+        by_id = {r["id"]: _row_to_dict(r) for r in rows}
+        return [by_id[i] for i in ids if i in by_id]
 
 
 def view_counts(account_id: int | None = None) -> dict:

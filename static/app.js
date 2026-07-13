@@ -653,6 +653,88 @@ function openComposeModal(prefill = {}) {
 
 $("#compose-btn").onclick = () => openComposeModal();
 
+// ---- Gelen kutusuyla sohbet (AI'ya Sor) ----
+
+const chatState = { messages: [] };  // {role, content, sources?} — sayfa açık kaldıkça sürer
+
+const CHAT_SUGGESTIONS = [
+  "Yanıt bekleyen maillerim hangileri?",
+  "Bu hafta hangi faturalar geldi, son ödeme tarihleri ne?",
+  "Son gelen mail kimden ve ne hakkında?",
+];
+
+function renderChatLog() {
+  const log = $("#chat-log");
+  if (!log) return;
+  if (!chatState.messages.length) {
+    log.innerHTML = `<div class="chat-empty">
+      <p>Gelen kutunuz hakkında istediğinizi sorun — yanıtlar yalnızca maillerinize dayanır.</p>
+      ${CHAT_SUGGESTIONS.map((s) => `<button class="chat-suggestion" data-q="${esc(s)}">${esc(s)}</button>`).join("")}
+    </div>`;
+    log.querySelectorAll(".chat-suggestion").forEach((b) => {
+      b.onclick = () => { $("#chat-input").value = b.dataset.q; sendChatMessage(); };
+    });
+    return;
+  }
+  log.innerHTML = chatState.messages.map((m) => {
+    if (m.role === "user")
+      return `<div class="chat-msg user">${esc(m.content)}</div>`;
+    if (m.pending)
+      return `<div class="chat-msg assistant pending">Mailleriniz taranıyor...</div>`;
+    const sources = (m.sources || []).map((s) =>
+      `<button class="chat-source" data-mail="${s.id}" title="${esc(s.subject)}">${MI.inbox} ${esc(s.sender)} — ${esc((s.subject || "").slice(0, 40))}</button>`
+    ).join("");
+    return `<div class="chat-msg assistant">${esc(m.content)}${sources ? `<div class="chat-sources">${sources}</div>` : ""}</div>`;
+  }).join("");
+  log.querySelectorAll("[data-mail]").forEach((btn) => {
+    btn.onclick = () => {
+      closeModal();
+      document.querySelector('.rail-btn[data-view="inbox"]').click();
+      selectEmail(parseInt(btn.dataset.mail));
+    };
+  });
+  log.scrollTop = log.scrollHeight;
+}
+
+async function sendChatMessage() {
+  const input = $("#chat-input");
+  const question = input.value.trim();
+  if (!question) return;
+  input.value = "";
+  const history = chatState.messages
+    .filter((m) => !m.pending)
+    .map((m) => ({ role: m.role, content: m.content }));
+  chatState.messages.push({ role: "user", content: question });
+  chatState.messages.push({ role: "assistant", content: "", pending: true });
+  renderChatLog();
+  try {
+    const data = await api("/api/inbox/chat", { method: "POST",
+      body: JSON.stringify({ question, history }) });
+    chatState.messages.pop();
+    chatState.messages.push({ role: "assistant", content: data.answer, sources: data.sources });
+  } catch (err) {
+    chatState.messages.pop();
+    chatState.messages.push({ role: "assistant", content: "Hata: " + err.message });
+  }
+  renderChatLog();
+}
+
+function openChatModal() {
+  openModal(`
+    <h3>${MI.sparkle} Gelen Kutusuna Sor</h3>
+    <div id="chat-log" class="chat-log"></div>
+    <div class="form-row" style="margin-top:10px">
+      <input id="chat-input" placeholder="ör. Ayşe'yle fiyat nede kalmıştı?" autocomplete="off">
+      <button class="pill accent" id="chat-send" style="flex:0 0 auto">${MI.send} Sor</button>
+    </div>`);
+  renderChatLog();
+  $("#chat-send").onclick = sendChatMessage;
+  $("#chat-input").onkeydown = (e) => { if (e.key === "Enter") sendChatMessage(); };
+  $("#chat-input").focus();
+}
+
+$("#chat-btn").onclick = openChatModal;
+
 // ---- Klavye kısayolları (j/k gezin, e arşivle, s yıldızla, r yanıtla, c yeni) ----
 
 document.addEventListener("keydown", (ev) => {
@@ -1756,7 +1838,7 @@ $("#cal-src-add").onclick = async () => {
 
 (async function init() {
   try {
-    const EXPECTED_API_VERSION = 11;
+    const EXPECTED_API_VERSION = 12;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);

@@ -371,6 +371,37 @@ def compose_draft(req: ComposeDraftRequest):
     return draft
 
 
+class InboxChatRequest(BaseModel):
+    question: str
+    history: list[dict] = []      # [{role: user|assistant, content: str}]
+
+
+@app.post("/api/inbox/chat")
+def inbox_chat(req: InboxChatRequest):
+    """Gelen kutusuyla sohbet: soruyla ilgili mailleri bulur, AI yanıtlar."""
+    question = req.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Soru boş olamaz")
+    emails = database.search_emails_for_chat(question)
+    try:
+        result = ai.answer_inbox_question(
+            question, emails, history=req.history,
+            user_name=config.USER_NAME,
+            today=dt.date.today().isoformat(),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Yanıt üretilemedi: {e}")
+    valid_ids = {e["id"] for e in emails}
+    sources = []
+    for sid in result.get("source_ids", []):
+        if sid in valid_ids:
+            m = next(e for e in emails if e["id"] == sid)
+            sources.append({"id": m["id"], "subject": m["subject"],
+                            "sender": m["sender_name"] or m["sender_email"],
+                            "date": m["date"]})
+    return {"answer": result.get("answer", ""), "sources": sources}
+
+
 @app.get("/api/emails/{email_id}")
 def get_email(email_id: int):
     email_data = database.get_email(email_id)
@@ -1037,7 +1068,7 @@ def dataroom_send(req: SendFileRequest):
 
 
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 11
+API_VERSION = 12
 
 
 @app.get("/api/status")
