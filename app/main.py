@@ -371,6 +371,29 @@ def compose_draft(req: ComposeDraftRequest):
     return draft
 
 
+@app.get("/api/search")
+def unified_search(q: str = ""):
+    """Global arama (Cmd+K): mail + belge + etkinlik tek sorguda."""
+    q = q.strip()
+    if len(q) < 2:
+        return {"emails": [], "files": [], "events": []}
+    res = database.global_search(q)
+    # Dosya adı eşleşmeleri — FTS yalnızca içeriğe bakar, adı ayrıca tara
+    ql = q.lower()
+    seen = {f["path"] for f in res["files"]}
+    name_hits = []
+    for f in dataroom.list_files():
+        if ql in f["filename"].lower() and f["path"] not in seen:
+            name_hits.append({"path": f["path"], "snippet": ""})
+            seen.add(f["path"])
+            if len(name_hits) >= 4:
+                break
+    res["files"] = (name_hits + res["files"])[:6]
+    for f in res["files"]:
+        f["filename"] = f["path"].rsplit("/", 1)[-1]
+    return res
+
+
 class InboxChatRequest(BaseModel):
     question: str
     history: list[dict] = []      # [{role: user|assistant, content: str}]
@@ -1068,7 +1091,7 @@ def dataroom_send(req: SendFileRequest):
 
 
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 12
+API_VERSION = 13
 
 
 @app.get("/api/status")

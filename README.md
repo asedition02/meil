@@ -103,6 +103,7 @@ Gmail (IMAP) ──► Mail çekilir ──► Ekler dataroom'a kaydedilir
 
 - Mailler yalnızca **okunur** modda çekilir; gelen kutunuzda hiçbir şey değişmez (okundu işareti dahil).
 - Aynı konudaki mailler `References`/`In-Reply-To` başlıklarına göre **konuşma dizisi** olarak gruplanır; listede tek satır görünür, detayda tüm yazışma sıralanır ve AI'ya dizinin tamamı özetletilebilir.
+- **Global arama (Cmd+K / Ctrl+K)**: tek kutuda mail + dataroom belgesi + takvim etkinliği birlikte aranır; ok tuşlarıyla gezinip Enter ile doğrudan açarsınız. Türkçe karakter katlamalıdır — "hakedis" yazsanız da "hakediş"i bulur.
 - **"AI'ya Sor"** ile gelen kutunuza soru sorabilirsiniz ("Ayşe'yle fiyat nede kalmıştı?", "bu hafta hangi faturalar geldi?"): ilgili mailler tam metin aramayla bulunur, yanıt yalnızca bu maillere dayanır ve kaynak mailler tıklanabilir bağlantı olarak gösterilir.
 - Dataroom'da **içerik araması** vardır: PDF, Word, Excel, PowerPoint ve metin dosyalarından metin çıkarılır (pypdf + Office XML); arama kutusu dosya adına ek olarak belge içeriğinde de arar ve eşleşen parçayı vurgular. "AI Tara" butonu belgeleri sınıflandırır (fatura, sözleşme, dekont...), özet ve etiket üretir; faturalardan tutar ile son ödeme tarihini çıkarır.
 - Yanıtlar yalnızca sizin onayınızla, sizin hesabınızdan `Re:` konusuyla ve doğru konu dizisi (thread) referansıyla gönderilir.

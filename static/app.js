@@ -735,6 +735,141 @@ function openChatModal() {
 
 $("#chat-btn").onclick = openChatModal;
 
+// ---- Global arama paleti (Cmd+K / Ctrl+K) ----
+
+const gs = { items: [], sel: 0, seq: 0, open: false };
+
+function openGlobalSearch() {
+  gs.open = true; gs.items = []; gs.sel = 0;
+  $("#gs-overlay").style.display = "flex";
+  $("#gs-input").value = "";
+  $("#gs-results").innerHTML = `<div class="gs-hint">Yazmaya başlayın — maillerde, dataroom belgelerinde ve takvimde birlikte arar.</div>`;
+  $("#gs-input").focus();
+}
+
+function closeGlobalSearch() {
+  gs.open = false;
+  $("#gs-overlay").style.display = "none";
+}
+
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    if (gs.open) closeGlobalSearch(); else openGlobalSearch();
+  } else if (e.key === "Escape" && gs.open) {
+    e.stopPropagation();
+    closeGlobalSearch();
+  }
+}, true); // capture: modal'ın Escape dinleyicisinden önce çalışsın
+
+$("#gs-overlay").onclick = (e) => { if (e.target.id === "gs-overlay") closeGlobalSearch(); };
+
+let gsTimer = null;
+$("#gs-input").oninput = () => {
+  clearTimeout(gsTimer);
+  const q = $("#gs-input").value.trim();
+  if (q.length < 2) {
+    gs.items = [];
+    $("#gs-results").innerHTML = `<div class="gs-hint">En az 2 karakter yazın.</div>`;
+    return;
+  }
+  gsTimer = setTimeout(async () => {
+    const seq = ++gs.seq;
+    let data;
+    try {
+      data = await api(`/api/search?q=${encodeURIComponent(q)}`);
+    } catch { return; }
+    if (seq !== gs.seq || !gs.open) return; // eskimiş yanıt
+    gs.items = [
+      ...data.emails.map((m) => ({ type: "email", ...m })),
+      ...data.files.map((f) => ({ type: "file", ...f })),
+      ...data.events.map((ev) => ({ type: "event", ...ev })),
+    ];
+    gs.sel = 0;
+    renderGsResults();
+  }, 200);
+};
+
+function renderGsResults() {
+  const holder = $("#gs-results");
+  if (!gs.items.length) {
+    holder.innerHTML = `<div class="gs-hint">Sonuç bulunamadı.</div>`;
+    return;
+  }
+  let html = "";
+  for (const [type, label] of [["email", "Mailler"], ["file", "Belgeler"], ["event", "Etkinlikler"]]) {
+    const items = gs.items.filter((it) => it.type === type);
+    if (!items.length) continue;
+    html += `<div class="gs-group">${label}</div>`;
+    for (const it of items) {
+      const i = gs.items.indexOf(it);
+      const sel = i === gs.sel ? " sel" : "";
+      if (type === "email") {
+        html += `<div class="gs-item${sel}" data-i="${i}">${MI.inbox}
+          <div class="gs-body">
+            <span class="gs-title">${esc(it.sender || "")} — ${esc(it.subject || "(konu yok)")}</span>
+            ${it.snippet ? `<span class="gs-snip">${snippetHtml(it.snippet)}</span>` : ""}
+          </div><span class="gs-meta">${formatDate(it.date)}</span></div>`;
+      } else if (type === "file") {
+        html += `<div class="gs-item${sel}" data-i="${i}">${DRI.file}
+          <div class="gs-body">
+            <span class="gs-title">${esc(it.filename)}</span>
+            <span class="gs-snip">${it.snippet ? snippetHtml(it.snippet) : esc(it.path)}</span>
+          </div><span class="gs-meta">Dataroom</span></div>`;
+      } else {
+        html += `<div class="gs-item${sel}" data-i="${i}">${MI.calendar}
+          <div class="gs-body">
+            <span class="gs-title">${esc(it.title || "")}</span>
+            <span class="gs-snip">${esc(it.calendar_name || "Meil")}${it.location ? " · " + esc(it.location) : ""}</span>
+          </div><span class="gs-meta">${formatDateFull(it.start)}</span></div>`;
+      }
+    }
+  }
+  holder.innerHTML = html;
+  holder.querySelectorAll(".gs-item").forEach((el) => {
+    el.onclick = () => activateGsItem(parseInt(el.dataset.i));
+  });
+}
+
+$("#gs-input").onkeydown = (e) => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if (!gs.items.length) return;
+    gs.sel = e.key === "ArrowDown"
+      ? Math.min(gs.sel + 1, gs.items.length - 1)
+      : Math.max(gs.sel - 1, 0);
+    renderGsResults();
+    const el = document.querySelector(`.gs-item[data-i="${gs.sel}"]`);
+    if (el) el.scrollIntoView({ block: "nearest" });
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (gs.items[gs.sel]) activateGsItem(gs.sel);
+  }
+};
+
+async function activateGsItem(i) {
+  const it = gs.items[i];
+  closeGlobalSearch();
+  if (it.type === "email") {
+    document.querySelector('.rail-btn[data-view="inbox"]').click();
+    selectEmail(it.id);
+  } else if (it.type === "file") {
+    document.querySelector('.rail-btn[data-view="dataroom"]').click();
+    await loadDataroom();
+    const f = dr.files.find((x) => x.path === it.path);
+    if (f) openInspector(f);
+  } else {
+    document.querySelector('.rail-btn[data-view="calendar"]').click();
+    const d = new Date(it.start);
+    if (!isNaN(d)) {
+      state.cal.year = d.getFullYear();
+      state.cal.month = d.getMonth();
+      state.cal.selected = ymd(d);
+    }
+    loadCalendar();
+  }
+}
+
 // ---- Klavye kısayolları (j/k gezin, e arşivle, s yıldızla, r yanıtla, c yeni) ----
 
 document.addEventListener("keydown", (ev) => {
@@ -1838,7 +1973,7 @@ $("#cal-src-add").onclick = async () => {
 
 (async function init() {
   try {
-    const EXPECTED_API_VERSION = 12;
+    const EXPECTED_API_VERSION = 13;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);

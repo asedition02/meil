@@ -878,6 +878,74 @@ def search_emails_for_chat(question: str, limit: int = 12) -> list[dict]:
         return [by_id[i] for i in ids if i in by_id]
 
 
+def global_search(q: str) -> dict:
+    """Tek sorguda mail + dosya + etkinlik araması (Cmd+K paleti)."""
+    tokens = re.findall(r"\w{2,}", q, re.UNICODE)[:8]
+    out = {"emails": [], "files": [], "events": []}
+    if not tokens:
+        return out
+    like = f"%{q.strip()}%"
+    with get_db() as db:
+        if FTS_AVAILABLE:
+            match = " OR ".join(f'"{t}"*' for t in tokens)
+            try:
+                rows = db.execute(
+                    """SELECT email_id, snippet(emails_fts, -1, '[[', ']]', ' … ', 10) AS snip
+                       FROM emails_fts WHERE emails_fts MATCH ?
+                       ORDER BY bm25(emails_fts) LIMIT 8""",
+                    (match,),
+                ).fetchall()
+                ids = [r["email_id"] for r in rows]
+                snips = {r["email_id"]: r["snip"] for r in rows}
+                if ids:
+                    ph = ",".join("?" for _ in ids)
+                    erows = db.execute(
+                        f"""SELECT id, subject, sender_name, sender_email, date
+                            FROM emails WHERE id IN ({ph})""", ids).fetchall()
+                    by_id = {r["id"]: r for r in erows}
+                    out["emails"] = [
+                        {"id": i, "subject": by_id[i]["subject"],
+                         "sender": by_id[i]["sender_name"] or by_id[i]["sender_email"],
+                         "date": by_id[i]["date"], "snippet": snips[i]}
+                        for i in ids if i in by_id
+                    ]
+            except sqlite3.OperationalError:
+                pass
+            try:
+                rows = db.execute(
+                    """SELECT path, snippet(dataroom_fts, 1, '[[', ']]', ' … ', 10) AS snip
+                       FROM dataroom_fts WHERE dataroom_fts MATCH ?
+                       ORDER BY bm25(dataroom_fts) LIMIT 6""",
+                    (match,),
+                ).fetchall()
+                out["files"] = [{"path": r["path"], "snippet": r["snip"]} for r in rows]
+            except sqlite3.OperationalError:
+                pass
+        else:
+            rows = db.execute(
+                """SELECT id, subject, sender_name, sender_email, date FROM emails
+                   WHERE subject LIKE ? OR body_text LIKE ? OR sender_name LIKE ?
+                   ORDER BY date DESC LIMIT 8""",
+                (like, like, like),
+            ).fetchall()
+            out["emails"] = [
+                {"id": r["id"], "subject": r["subject"],
+                 "sender": r["sender_name"] or r["sender_email"],
+                 "date": r["date"], "snippet": ""}
+                for r in rows
+            ]
+        rows = db.execute(
+            """SELECT e.id, e.title, e.start, e.all_day, e.location,
+                      c.name AS calendar_name, c.color AS calendar_color
+               FROM events e LEFT JOIN calendars c ON c.id = e.calendar_id
+               WHERE e.title LIKE ? OR e.location LIKE ? OR e.notes LIKE ?
+               ORDER BY e.start DESC LIMIT 5""",
+            (like, like, like),
+        ).fetchall()
+        out["events"] = [dict(r) for r in rows]
+    return out
+
+
 def view_counts(account_id: int | None = None) -> dict:
     """Her görünüm sekmesi için mail sayısı + okunmamış sayısı."""
     counts = {}
