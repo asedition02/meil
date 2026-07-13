@@ -34,5 +34,11 @@ SYNC_LIMIT = int(os.environ.get("SYNC_LIMIT", "25"))
 # Kullanıcının imzası / yanıtlarda kullanılacak isim
 USER_NAME = os.environ.get("USER_NAME", "")
 
+# Microsoft 365 / Outlook OAuth (XOAUTH2) — Entra ID uygulama kaydı gerekir.
+# Microsoft, Nisan 2026'da IMAP/SMTP için şifreyle girişi tamamen kapattı;
+# Outlook hesapları artık yalnızca OAuth ile bağlanabilir. Bkz. README.
+MS_CLIENT_ID = os.environ.get("MS_CLIENT_ID", "").strip()
+MS_TENANT = os.environ.get("MS_TENANT", "common").strip() or "common"
+
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DATAROOM_DIR.mkdir(parents=True, exist_ok=True)

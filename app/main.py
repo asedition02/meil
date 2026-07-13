@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai, calendar_client, config, database, dataroom, email_client, extract
+from . import ai, calendar_client, config, database, dataroom, email_client, extract, ms_oauth
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("meil")
@@ -141,6 +141,56 @@ def remove_account(account_id: int):
         raise HTTPException(status_code=404, detail="Hesap bulunamadı")
     database.delete_account(account_id)
     return {"ok": True}
+
+
+# ---- Microsoft OAuth (cihaz kodu akışı) ----
+
+class MsPollRequest(BaseModel):
+    flow_id: str
+    display_name: str = ""
+
+
+@app.post("/api/accounts/oauth/ms/start")
+def ms_oauth_start():
+    """Microsoft cihaz kodu akışını başlatır; kullanıcıya gösterilecek kodu döner."""
+    try:
+        return ms_oauth.start_device_flow()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Microsoft'a ulaşılamadı: {e}")
+
+
+@app.post("/api/accounts/oauth/ms/poll")
+def ms_oauth_poll(req: MsPollRequest):
+    """Akış durumunu sorar; giriş tamamlanınca hesabı doğrulayıp ekler."""
+    status = ms_oauth.poll_flow(req.flow_id)
+    if status["status"] != "done":
+        return status
+    email_addr = status["email"]
+    if not email_addr:
+        raise HTTPException(status_code=502, detail="Microsoft e-posta adresi döndürmedi")
+    if database.get_account_by_email(email_addr):
+        raise HTTPException(status_code=409, detail=f"{email_addr} zaten ekli")
+    account = {
+        "display_name": req.display_name.strip() or email_addr,
+        "email": email_addr,
+        "password": status["token_cache"],   # şifreli saklanan OAuth jeton önbelleği
+        "imap_host": "outlook.office365.com",
+        "imap_port": 993,
+        "smtp_host": "smtp.office365.com",
+        "smtp_port": 587,
+        "smtp_security": "starttls",
+        "auth_type": "oauth-ms",
+    }
+    try:
+        email_client.test_login(account)
+    except (email_client.EmailConfigError, email_client.EmailAuthError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Sunucuya bağlanılamadı: {e}")
+    account_id = database.create_account(account)
+    return {"status": "added", "id": account_id, "email": email_addr}
 
 
 # ---- Eşitleme ----
@@ -987,7 +1037,7 @@ def dataroom_send(req: SendFileRequest):
 
 
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 10
+API_VERSION = 11
 
 
 @app.get("/api/status")

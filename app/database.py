@@ -11,12 +11,13 @@ CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     display_name TEXT,
     email TEXT UNIQUE,
-    password TEXT,
+    password TEXT,                      -- şifreli: parola ya da OAuth jeton önbelleği
     imap_host TEXT,
     imap_port INTEGER DEFAULT 993,
     smtp_host TEXT,
     smtp_port INTEGER DEFAULT 465,
     smtp_security TEXT DEFAULT 'ssl',   -- ssl | starttls
+    auth_type TEXT DEFAULT 'password',  -- password | oauth-ms
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -162,6 +163,10 @@ def _migrate(db: sqlite3.Connection):
         db.execute("ALTER TABLE emails ADD COLUMN starred INTEGER DEFAULT 0")
         db.execute("ALTER TABLE emails ADD COLUMN snooze_until TEXT")
         db.execute("UPDATE emails SET is_read = 1")  # mevcut mailler okunmuş sayılsın
+    acc_cols = {r["name"] for r in db.execute("PRAGMA table_info(accounts)").fetchall()}
+    if acc_cols and "auth_type" not in acc_cols:
+        # OAuth öncesi şema → kimlik doğrulama türü sütunu
+        db.execute("ALTER TABLE accounts ADD COLUMN auth_type TEXT DEFAULT 'password'")
     if cols and "thread_id" not in cols:
         # threading öncesi şema → konuşma sütunları; mevcut mailler tek başına dizi olur
         db.execute("ALTER TABLE emails ADD COLUMN in_reply_to TEXT")
@@ -226,8 +231,8 @@ def create_account(data: dict) -> int:
         cur = db.execute(
             """INSERT INTO accounts
                (display_name, email, password, imap_host, imap_port,
-                smtp_host, smtp_port, smtp_security)
-               VALUES (?,?,?,?,?,?,?,?)""",
+                smtp_host, smtp_port, smtp_security, auth_type)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (
                 data.get("display_name") or data["email"],
                 data["email"],
@@ -237,9 +242,17 @@ def create_account(data: dict) -> int:
                 data["smtp_host"],
                 data.get("smtp_port", 465),
                 data.get("smtp_security", "ssl"),
+                data.get("auth_type", "password"),
             ),
         )
         return cur.lastrowid
+
+
+def update_account_secret(account_id: int, secret: str):
+    """OAuth jeton önbelleği yenilenince şifreli olarak günceller."""
+    with get_db() as db:
+        db.execute("UPDATE accounts SET password = ? WHERE id = ?",
+                   (crypto.encrypt_secret(secret), account_id))
 
 
 def list_accounts(include_password: bool = False) -> list[dict]:

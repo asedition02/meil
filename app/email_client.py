@@ -1,4 +1,10 @@
-"""IMAP ile mail çekme, SMTP ile mail gönderme — hesap bazlı."""
+"""IMAP ile mail çekme, SMTP ile mail gönderme — hesap bazlı.
+
+Kimlik doğrulama: klasik şifre (auth_type='password') veya Microsoft OAuth
+(auth_type='oauth-ms', XOAUTH2). Microsoft, Nisan 2026'da IMAP/SMTP için
+şifreyle girişi kapattığından Outlook/M365 hesapları yalnızca OAuth ile çalışır.
+"""
+import base64
 import email
 import email.policy
 import imaplib
@@ -7,6 +13,8 @@ import smtplib
 from email.header import decode_header, make_header
 from email.message import EmailMessage
 from email.utils import parseaddr, parsedate_to_datetime
+
+from . import database, ms_oauth
 
 
 class EmailConfigError(Exception):
@@ -38,13 +46,33 @@ PRESETS = {
 }
 
 
-def auth_help(account_email: str) -> str:
+def auth_help(account_email: str, host: str = "") -> str:
+    if "office365" in host or "outlook" in host:
+        return (
+            f"{account_email} için giriş reddedildi. Microsoft, IMAP/SMTP için "
+            "şifreyle girişi (temel kimlik doğrulama) Nisan 2026'da tamamen kapattı — "
+            "şifreniz doğru olsa bile sunucu reddeder. Hesaplar sekmesinde sağlayıcı "
+            "olarak 'Outlook / Microsoft 365 (Microsoft ile giriş)' seçip OAuth ile bağlanın."
+        )
     return (
         f"{account_email} için giriş reddedildi. Kontrol listesi: "
         "1) Gmail/Yahoo/Yandex için normal şifre değil, UYGULAMA ŞİFRESİ gerekir. "
         "2) Şirket maili için IMAP erişiminin açık olduğunu BT ekibinize sorun. "
         "3) Sunucu adreslerini ve portları kontrol edin."
     )
+
+
+def _ms_access_token(account: dict) -> str:
+    """OAuth hesabı için erişim jetonu üretir; yenilenen önbelleği DB'ye yazar."""
+    token, new_cache = ms_oauth.get_access_token(account["password"])
+    if new_cache and account.get("id"):
+        database.update_account_secret(account["id"], new_cache)
+        account["password"] = new_cache
+    return token
+
+
+def _xoauth2_string(user: str, token: str) -> str:
+    return f"user={user}\x01auth=Bearer {token}\x01\x01"
 
 
 def _normalize_password(password: str) -> str:
@@ -127,14 +155,28 @@ def _extract_attachments(msg: email.message.Message) -> list[tuple[str, bytes]]:
 def _imap_login(account: dict) -> imaplib.IMAP4_SSL:
     conn = imaplib.IMAP4_SSL(account["imap_host"], int(account.get("imap_port") or 993))
     try:
-        conn.login(account["email"], _normalize_password(account["password"]))
+        if account.get("auth_type") == "oauth-ms":
+            token = _ms_access_token(account)
+            conn.authenticate(
+                "XOAUTH2",
+                lambda _: _xoauth2_string(account["email"], token).encode(),
+            )
+        else:
+            conn.login(account["email"], _normalize_password(account["password"]))
     except imaplib.IMAP4.error as e:
         try:
             conn.logout()
         except Exception:
             pass
-        if "AUTHENTICATIONFAILED" in str(e).upper():
-            raise EmailAuthError(auth_help(account["email"])) from e
+        msg = str(e).upper()
+        if account.get("auth_type") == "oauth-ms":
+            raise EmailAuthError(
+                f"{account['email']} için Microsoft IMAP girişi reddedildi. "
+                "Kuruluşunuzda IMAP erişimi kapalı olabilir — BT yöneticinize "
+                "'Exchange Online'da IMAP'in açık olması gerektiğini' iletin."
+            ) from e
+        if "AUTHENTICATIONFAILED" in msg or "LOGIN FAILED" in msg or "BASIC AUTH" in msg:
+            raise EmailAuthError(auth_help(account["email"], account.get("imap_host", ""))) from e
         raise
     return conn
 
@@ -207,14 +249,30 @@ def _smtp_connect(account: dict) -> smtplib.SMTP:
     security = account.get("smtp_security") or "ssl"
     if security == "starttls":
         smtp = smtplib.SMTP(host, port, timeout=30)
+        smtp.ehlo()
         smtp.starttls()
+        smtp.ehlo()
     else:
         smtp = smtplib.SMTP_SSL(host, port, timeout=30)
     try:
-        smtp.login(account["email"], _normalize_password(account["password"]))
+        if account.get("auth_type") == "oauth-ms":
+            token = _ms_access_token(account)
+            auth = base64.b64encode(
+                _xoauth2_string(account["email"], token).encode()
+            ).decode()
+            code, resp = smtp.docmd("AUTH", "XOAUTH2 " + auth)
+            if code != 235:
+                smtp.close()
+                raise EmailAuthError(
+                    f"{account['email']} için Microsoft SMTP girişi reddedildi "
+                    f"({code} {resp!r}). Kuruluşunuzda 'Authenticated SMTP' kapalı "
+                    "olabilir — BT yöneticinizden açmasını isteyin."
+                )
+        else:
+            smtp.login(account["email"], _normalize_password(account["password"]))
     except smtplib.SMTPAuthenticationError as e:
         smtp.close()
-        raise EmailAuthError(auth_help(account["email"])) from e
+        raise EmailAuthError(auth_help(account["email"], host)) from e
     return smtp
 
 

@@ -1379,10 +1379,10 @@ function openSendModal(file) {
 
 const PROVIDER_HINTS = {
   gmail: 'Gmail için normal şifreniz çalışmaz — <a href="https://myaccount.google.com/apppasswords" target="_blank">uygulama şifresi</a> oluşturun (2 Adımlı Doğrulama açık olmalı).',
-  outlook: "Microsoft 365 şirket hesabınızda IMAP erişimi ve temel kimlik doğrulama/uygulama şifresi BT yöneticiniz tarafından açılmış olmalıdır. Emin değilseniz BT ekibinize sorun.",
+  "ms-oauth": "Şifre gerekmez: Microsoft girişiyle (OAuth) bağlanır. Microsoft, Nisan 2026'da IMAP/SMTP için şifreyle girişi kapattığından Outlook/M365 hesapları yalnızca bu yolla eklenebilir. Sunucuda MS_CLIENT_ID tanımlı olmalı — kurulum adımları README'de.",
   yahoo: 'Yahoo için <a href="https://login.yahoo.com/account/security" target="_blank">uygulama şifresi</a> oluşturmanız gerekir.',
   yandex: "Yandex için hesap ayarlarından IMAP erişimini açın ve uygulama şifresi oluşturun.",
-  custom: "Şirket mail sunucunuzun IMAP/SMTP adreslerini BT ekibinizden öğrenebilirsiniz. IMAP genellikle 993 (SSL), SMTP 465 (SSL) veya 587 (STARTTLS) portunu kullanır.",
+  custom: "Şirket mail sunucunuzun IMAP/SMTP adreslerini BT ekibinizden öğrenebilirsiniz. IMAP genellikle 993 (SSL), SMTP 465 (SSL) veya 587 (STARTTLS) portunu kullanır. Şirketiniz Microsoft 365 kullanıyorsa bu seçenek çalışmaz — 'Microsoft ile giriş' seçeneğini kullanın.",
 };
 
 async function loadAccounts() {
@@ -1397,7 +1397,7 @@ async function loadAccounts() {
         <div class="account-card">
           ${avatarHtml(a.display_name, a.email)}
           <div class="info">
-            <div class="name">${esc(a.display_name || a.email)}</div>
+            <div class="name">${esc(a.display_name || a.email)}${a.auth_type === "oauth-ms" ? ' <span class="badge acct">Microsoft OAuth</span>' : ""}</div>
             <div class="detail">${esc(a.email)} · IMAP: ${esc(a.imap_host)}:${a.imap_port} · SMTP: ${esc(a.smtp_host)}:${a.smtp_port} (${esc(a.smtp_security)})</div>
           </div>
           <button class="pill danger-ghost" data-del="${a.id}">Kaldır</button>
@@ -1418,14 +1418,61 @@ async function loadAccounts() {
 
 $("#acc-provider").onchange = () => {
   const p = $("#acc-provider").value;
+  const oauth = p === "ms-oauth";
   $("#custom-fields").style.display = p === "custom" ? "grid" : "none";
+  $("#acc-email").parentElement.style.display = oauth ? "none" : "";
+  $("#acc-password").parentElement.style.display = oauth ? "none" : "";
+  $("#acc-save").textContent = oauth ? "Microsoft ile Bağlan" : "Bağlantıyı Test Et ve Ekle";
   $("#provider-hint").innerHTML = PROVIDER_HINTS[p] || "";
 };
 $("#acc-provider").onchange();
 
+async function startMsOauth(displayName) {
+  let flow;
+  try {
+    flow = await api("/api/accounts/oauth/ms/start", { method: "POST" });
+  } catch (err) { return toast(err.message, true); }
+  openModal(`
+    <h3>Microsoft ile Bağlan</h3>
+    <div class="form-col" style="text-align:center">
+      <p style="font-size:13.5px">Aşağıdaki adrese gidin ve bu kodu girin; girişi tamamlayınca hesap otomatik eklenecek.</p>
+      <a href="${esc(flow.verification_uri)}" target="_blank" style="font-weight:650">${esc(flow.verification_uri)}</a>
+      <div id="ms-code" style="font-family:'Fira Code',monospace;font-size:26px;font-weight:600;letter-spacing:3px;padding:12px;border:1px dashed var(--border);border-radius:10px;user-select:all">${esc(flow.user_code)}</div>
+      <p class="hint" id="ms-status">Giriş bekleniyor... Bu pencereyi kapatmayın.</p>
+    </div>
+    <div class="modal-actions">
+      <button class="pill ghost" id="ms-cancel">Vazgeç</button>
+    </div>`);
+  let stopped = false;
+  $("#ms-cancel").onclick = () => { stopped = true; closeModal(); };
+  while (!stopped) {
+    await new Promise((r) => setTimeout(r, 3000));
+    if (stopped) break;
+    let s;
+    try {
+      s = await api("/api/accounts/oauth/ms/poll", { method: "POST",
+        body: JSON.stringify({ flow_id: flow.flow_id, display_name: displayName }) });
+    } catch (err) {
+      closeModal();
+      return toast(err.message, true);
+    }
+    if (s.status === "pending") continue;
+    if (s.status === "error") {
+      closeModal();
+      return toast("Microsoft girişi tamamlanamadı: " + s.error, true);
+    }
+    closeModal();
+    toast(`${s.email} bağlandı ✓ — Eşitle butonuyla mailleri getirebilirsiniz`);
+    $("#acc-name").value = "";
+    loadAccounts();
+    return;
+  }
+}
+
 $("#acc-save").onclick = async () => {
   const btn = $("#acc-save");
   const provider = $("#acc-provider").value;
+  if (provider === "ms-oauth") return startMsOauth($("#acc-name").value);
   const payload = {
     display_name: $("#acc-name").value,
     email: $("#acc-email").value.trim(),
@@ -1709,7 +1756,7 @@ $("#cal-src-add").onclick = async () => {
 
 (async function init() {
   try {
-    const EXPECTED_API_VERSION = 10;
+    const EXPECTED_API_VERSION = 11;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);

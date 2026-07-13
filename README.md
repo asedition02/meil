@@ -54,8 +54,37 @@ Mailde tespit edilen etkinlikler mail detayındaki **"📅 Takvime Ekle"** kart�
 ### Hesap türlerine göre notlar
 
 - **Gmail / Yahoo / Yandex:** Normal şifre çalışmaz; **uygulama şifresi** gerekir (Gmail: [buradan](https://myaccount.google.com/apppasswords), önce 2 Adımlı Doğrulama açık olmalı).
-- **Şirket maili:** IMAP/SMTP sunucu adreslerini ve portları BT ekibinizden öğrenin. IMAP genellikle 993 (SSL), SMTP 465 (SSL) veya 587 (STARTTLS) kullanır.
-- **Microsoft 365:** Şirket kiracınızda (tenant) IMAP erişimi kapalıysa BT yöneticinizin açması gerekir.
+- **Şirket maili (Microsoft dışı):** IMAP/SMTP sunucu adreslerini ve portları BT ekibinizden öğrenin. IMAP genellikle 993 (SSL), SMTP 465 (SSL) veya 587 (STARTTLS) kullanır.
+- **Outlook / Microsoft 365:** Aşağıdaki OAuth kurulumu gerekir — şifreyle giriş artık mümkün değil.
+
+## Microsoft 365 / Outlook hesabı bağlama (OAuth)
+
+Microsoft, **Nisan 2026'da** Exchange Online ve Outlook.com'da IMAP/SMTP için
+şifreyle girişi (temel kimlik doğrulama) tamamen kapattı. Şifreniz doğru olsa
+bile sunucu artık reddeder; tek yol OAuth 2.0'dır. Meil bunun için "Microsoft
+ile giriş" (cihaz kodu) akışını destekler. Tek seferlik kurulum:
+
+1. [portal.azure.com](https://portal.azure.com) → **Microsoft Entra ID** →
+   **App registrations** → **New registration**.
+2. Ad: `Meil` (herhangi bir şey olabilir). *Supported account types*:
+   **"Accounts in any organizational directory and personal Microsoft
+   accounts"** seçin. Redirect URI **boş** bırakın → **Register**.
+3. Açılan sayfada **Application (client) ID** değerini kopyalayın.
+4. Sol menü → **Authentication** → en altta **Advanced settings** →
+   **"Allow public client flows"** anahtarını **Yes** yapın → **Save**.
+5. Kopyaladığınız ID'yi `.env` dosyanıza yazın: `MS_CLIENT_ID=xxxxxxxx-...`
+   ve sunucuyu yeniden başlatın.
+
+Sonra uygulamada **Hesaplar → Sağlayıcı: "Outlook / Microsoft 365 (Microsoft
+ile giriş)" → Microsoft ile Bağlan**. Ekranda çıkan kodu
+[microsoft.com/devicelogin](https://microsoft.com/devicelogin) adresine girin;
+giriş tamamlanınca hesap otomatik eklenir. Şifreniz hiçbir yerde saklanmaz —
+yalnızca Microsoft'un verdiği (şifrelenmiş) erişim jetonu tutulur.
+
+> **Şirket hesabı notu:** Kuruluşunuz "kullanıcı onayı"nı kapattıysa ilk
+> girişte "admin approval required" görebilirsiniz — BT yöneticinizin bir
+> kez onay vermesi yeterli. Ayrıca kiracıda IMAP erişimi ve "Authenticated
+> SMTP" açık olmalıdır (uygulama kapalıysa anlaşılır bir hata gösterir).
 
 ## Nasıl çalışır?
 
