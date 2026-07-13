@@ -80,6 +80,8 @@ Gmail (IMAP) ──► Mail çekilir ──► Ekler dataroom'a kaydedilir
 
 ## Güvenlik notları
 
+- Hesap ve takvim şifreleri veritabanında **şifreli** (Fernet/AES) saklanır; düz metin tutulmaz. Eski kayıtlar ilk açılışta otomatik şifrelenir.
+- Şifreleme anahtarı öncelikle `MEIL_SECRET_KEY` ortam değişkeninden okunur; tanımlı değilse `data/secret.key` otomatik üretilir. Anahtarı `.env`'e taşımanız önerilir — böylece `meil.db` dosyası tek başına sızsa bile şifreler çözülemez. **Anahtarı kaybederseniz** kayıtlı şifreler geri getirilemez; hesapları arayüzden yeniden eklemeniz gerekir.
 - `.env` dosyası `.gitignore`'dadır — şifrelerinizi asla commit etmeyin.
 - Uygulama şifresini istediğiniz an Google hesabınızdan iptal edebilirsiniz.
 - Mail içerikleri tasnif için Anthropic API'ye gönderilir.

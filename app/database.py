@@ -4,7 +4,7 @@ import re
 import sqlite3
 from contextlib import contextmanager
 
-from . import config
+from . import config, crypto
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
@@ -206,6 +206,17 @@ def init_db():
             FTS_AVAILABLE = True
         except sqlite3.OperationalError:
             FTS_AVAILABLE = False  # FTS5 yoksa LIKE aramasına düşülür
+        _encrypt_legacy_secrets(db)
+
+
+def _encrypt_legacy_secrets(db: sqlite3.Connection):
+    """Düz metin saklanmış eski hesap/takvim şifrelerini şifreler (tek seferlik)."""
+    for table in ("accounts", "calendars"):
+        rows = db.execute(f"SELECT id, password FROM {table} WHERE password != ''").fetchall()
+        for r in rows:
+            if r["password"] and not crypto.is_encrypted(r["password"]):
+                db.execute(f"UPDATE {table} SET password = ? WHERE id = ?",
+                           (crypto.encrypt_secret(r["password"]), r["id"]))
 
 
 # ---- Hesaplar ----
@@ -220,7 +231,7 @@ def create_account(data: dict) -> int:
             (
                 data.get("display_name") or data["email"],
                 data["email"],
-                data["password"],
+                crypto.encrypt_secret(data["password"]),
                 data["imap_host"],
                 data.get("imap_port", 993),
                 data["smtp_host"],
@@ -235,8 +246,10 @@ def list_accounts(include_password: bool = False) -> list[dict]:
     with get_db() as db:
         rows = db.execute("SELECT * FROM accounts ORDER BY id").fetchall()
         accounts = [dict(r) for r in rows]
-        if not include_password:
-            for a in accounts:
+        for a in accounts:
+            if include_password:
+                a["password"] = crypto.decrypt_secret(a.get("password") or "")
+            else:
                 a.pop("password", None)
         return accounts
 
@@ -244,13 +257,21 @@ def list_accounts(include_password: bool = False) -> list[dict]:
 def get_account(account_id: int) -> dict | None:
     with get_db() as db:
         row = db.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        account = dict(row)
+        account["password"] = crypto.decrypt_secret(account.get("password") or "")
+        return account
 
 
 def get_account_by_email(email_addr: str) -> dict | None:
     with get_db() as db:
         row = db.execute("SELECT * FROM accounts WHERE email = ?", (email_addr,)).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        account = dict(row)
+        account["password"] = crypto.decrypt_secret(account.get("password") or "")
+        return account
 
 
 def delete_account(account_id: int):
@@ -274,7 +295,7 @@ def create_calendar(data: dict) -> int:
                 data["type"],
                 data.get("url", ""),
                 data.get("username", ""),
-                data.get("password", ""),
+                crypto.encrypt_secret(data.get("password", "")),
                 data.get("color") or CALENDAR_COLORS[n % len(CALENDAR_COLORS)],
             ),
         )
@@ -285,8 +306,10 @@ def list_calendars(include_password: bool = False) -> list[dict]:
     with get_db() as db:
         rows = db.execute("SELECT * FROM calendars ORDER BY id").fetchall()
         cals = [dict(r) for r in rows]
-        if not include_password:
-            for c in cals:
+        for c in cals:
+            if include_password:
+                c["password"] = crypto.decrypt_secret(c.get("password") or "")
+            else:
                 c.pop("password", None)
                 c.pop("username", None)
                 c.pop("url", None)
@@ -296,7 +319,11 @@ def list_calendars(include_password: bool = False) -> list[dict]:
 def get_calendar(calendar_id: int) -> dict | None:
     with get_db() as db:
         row = db.execute("SELECT * FROM calendars WHERE id = ?", (calendar_id,)).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        cal = dict(row)
+        cal["password"] = crypto.decrypt_secret(cal.get("password") or "")
+        return cal
 
 
 def delete_calendar(calendar_id: int):
