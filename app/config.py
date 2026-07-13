@@ -37,7 +37,9 @@ USER_NAME = os.environ.get("USER_NAME", "")
 # Microsoft 365 / Outlook OAuth (XOAUTH2) — Entra ID uygulama kaydı gerekir.
 # Microsoft, Nisan 2026'da IMAP/SMTP için şifreyle girişi tamamen kapattı;
 # Outlook hesapları artık yalnızca OAuth ile bağlanabilir. Bkz. README.
-MS_CLIENT_ID = os.environ.get("MS_CLIENT_ID", "").strip()
+# Varsayılan: "Meil" uygulama kaydı (public client — gizli anahtar içermez,
+# cihaz kodu akışında kimlik doğrulamayı her zaman Microsoft'un kendisi yapar).
+MS_CLIENT_ID = os.environ.get("MS_CLIENT_ID", "").strip() or "2fae9a13-5d84-42f9-bf8b-ff4085924a42"
 MS_TENANT = os.environ.get("MS_TENANT", "common").strip() or "common"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
