@@ -4,13 +4,13 @@ import json
 import logging
 import secrets
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai, calendar_client, config, database, dataroom, email_client, extract, ms_oauth
+from . import ai, auth, calendar_client, config, database, dataroom, email_client, extract, ms_oauth
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("meil")
@@ -18,14 +18,37 @@ log = logging.getLogger("meil")
 app = FastAPI(title="Meil — E-posta Asistanı")
 database.init_db()
 
-# CORS middleware
+# CORS: arayüz aynı sunucudan servis edildiği için çapraz kaynak gerekmiyor;
+# yalnızca yerel geliştirme araçları için localhost'a izin verilir.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# PIN belirlendiyse tüm /api uçları oturum ister (auth/status/paylaşım hariç)
+_AUTH_EXEMPT = ("/api/auth/", "/share/")
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    path = request.url.path
+    needs_auth = (
+        path.startswith("/api")
+        and path != "/api/status"
+        and not path.startswith(_AUTH_EXEMPT)
+    )
+    if needs_auth and auth.pin_is_set():
+        if not auth.session_valid(request.cookies.get(auth.SESSION_COOKIE)):
+            return JSONResponse({"detail": "Giriş gerekli"}, status_code=401)
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    if not path.startswith("/share/"):
+        response.headers.setdefault("X-Frame-Options", "DENY")
+    return response
 
 
 def _bootstrap_env_account():
@@ -110,6 +133,61 @@ def _account_dict(req: AccountRequest) -> dict:
         "smtp_port": preset.get("smtp_port") or req.smtp_port,
         "smtp_security": preset.get("smtp_security") or req.smtp_security,
     }
+
+
+# ---- Giriş (PIN) ----
+
+class PinRequest(BaseModel):
+    pin: str
+
+
+def _set_session_cookie(response: Response, token: str):
+    response.set_cookie(
+        auth.SESSION_COOKIE, token,
+        max_age=auth.SESSION_DAYS * 86400,
+        httponly=True, samesite="lax",
+    )
+
+
+@app.get("/api/auth/status")
+def auth_status(request: Request):
+    setup = auth.pin_is_set()
+    authed = (not setup) or auth.session_valid(request.cookies.get(auth.SESSION_COOKIE))
+    return {"setup": setup, "authed": authed}
+
+
+@app.post("/api/auth/setup")
+def auth_setup(req: PinRequest, response: Response):
+    """İlk kurulum: PIN belirle ve oturum aç."""
+    if auth.pin_is_set():
+        raise HTTPException(status_code=400, detail="PIN zaten belirlenmiş")
+    if len(req.pin.strip()) < 4:
+        raise HTTPException(status_code=400, detail="PIN en az 4 karakter olmalı")
+    auth.set_pin(req.pin.strip())
+    _set_session_cookie(response, auth.create_session())
+    return {"ok": True}
+
+
+@app.post("/api/auth/login")
+def auth_login(req: PinRequest, request: Request, response: Response):
+    ip = request.client.host if request.client else "?"
+    wait = auth.is_locked(ip)
+    if wait:
+        raise HTTPException(status_code=429,
+                            detail=f"Çok fazla hatalı deneme — {wait} saniye bekleyin")
+    if not auth.verify_pin(req.pin.strip()):
+        auth.record_failure(ip)
+        raise HTTPException(status_code=401, detail="PIN hatalı")
+    auth.clear_failures(ip)
+    _set_session_cookie(response, auth.create_session())
+    return {"ok": True}
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request, response: Response):
+    auth.destroy_session(request.cookies.get(auth.SESSION_COOKIE))
+    response.delete_cookie(auth.SESSION_COOKIE)
+    return {"ok": True}
 
 
 # ---- Hesaplar ----
@@ -1091,7 +1169,7 @@ def dataroom_send(req: SendFileRequest):
 
 
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 13
+API_VERSION = 14
 
 
 @app.get("/api/status")

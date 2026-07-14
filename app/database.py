@@ -119,6 +119,17 @@ CREATE TABLE IF NOT EXISTS dataroom_notes (
 );
 CREATE INDEX IF NOT EXISTS idx_dataroom_notes_path ON dataroom_notes(file_path);
 
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    created_at TEXT DEFAULT (datetime('now')),
+    expires_at TEXT
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_msgid_account
     ON emails(message_id, account_id);
 CREATE INDEX IF NOT EXISTS idx_emails_category ON emails(category);
@@ -237,6 +248,54 @@ def _encrypt_legacy_secrets(db: sqlite3.Connection):
             if r["password"] and not crypto.is_encrypted(r["password"]):
                 db.execute(f"UPDATE {table} SET password = ? WHERE id = ?",
                            (crypto.encrypt_secret(r["password"]), r["id"]))
+
+
+# ---- Ayarlar + Oturumlar (giriş sistemi) ----
+
+def get_setting(key: str) -> str | None:
+    with get_db() as db:
+        row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+
+def set_setting(key: str, value: str):
+    with get_db() as db:
+        db.execute(
+            """INSERT INTO settings (key, value) VALUES (?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+            (key, value),
+        )
+
+
+def create_session(token: str, days: int):
+    with get_db() as db:
+        db.execute(
+            """INSERT INTO sessions (token, expires_at)
+               VALUES (?, datetime('now', ?))""",
+            (token, f"+{days} days"),
+        )
+        db.execute("DELETE FROM sessions WHERE expires_at < datetime('now')")
+
+
+def touch_session(token: str, days: int) -> bool:
+    """Oturum geçerliyse süresini uzatır ve True döner."""
+    with get_db() as db:
+        row = db.execute(
+            "SELECT 1 FROM sessions WHERE token = ? AND expires_at > datetime('now')",
+            (token,),
+        ).fetchone()
+        if not row:
+            return False
+        db.execute(
+            "UPDATE sessions SET expires_at = datetime('now', ?) WHERE token = ?",
+            (f"+{days} days", token),
+        )
+        return True
+
+
+def delete_session(token: str):
+    with get_db() as db:
+        db.execute("DELETE FROM sessions WHERE token = ?", (token,))
 
 
 # ---- Hesaplar ----

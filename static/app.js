@@ -84,6 +84,10 @@ async function api(path, options = {}) {
     ...options,
   });
   if (res.status === 405) throw new Error(RESTART_MSG);
+  if (res.status === 401 && !path.startsWith("/api/auth/")) {
+    showAuthOverlay("login");           // oturum düşmüş — giriş ekranını aç
+    throw new Error("Giriş gerekli");
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || `Hata: ${res.status}`);
   return data;
@@ -1971,9 +1975,65 @@ $("#cal-src-add").onclick = async () => {
 
 // ---- Başlangıç ----
 
-(async function init() {
+// ---- Giriş ekranı (PIN) ----
+
+let authMode = "login"; // login | setup
+
+function showAuthOverlay(mode) {
+  authMode = mode;
+  $("#auth-overlay").style.display = "flex";
+  $("#auth-error").textContent = "";
+  $("#auth-pin").value = "";
+  $("#auth-pin2").value = "";
+  $("#auth-pin2").style.display = mode === "setup" ? "" : "none";
+  $("#auth-title").textContent = mode === "setup" ? "Meil'e Hoş Geldiniz" : "Meil";
+  $("#auth-desc").textContent = mode === "setup"
+    ? "Uygulamayı korumak için bir PIN belirleyin (en az 4 karakter). Bu PIN her girişte sorulacak."
+    : "Devam etmek için PIN'inizi girin.";
+  $("#auth-submit").textContent = mode === "setup" ? "PIN'i Belirle" : "Giriş";
+  $("#auth-pin").focus();
+}
+
+function hideAuthOverlay() {
+  $("#auth-overlay").style.display = "none";
+}
+
+async function submitAuth() {
+  const pin = $("#auth-pin").value.trim();
+  const err = $("#auth-error");
+  err.textContent = "";
+  if (pin.length < 4) { err.textContent = "PIN en az 4 karakter olmalı"; return; }
+  if (authMode === "setup" && pin !== $("#auth-pin2").value.trim()) {
+    err.textContent = "PIN'ler eşleşmiyor";
+    return;
+  }
+  const btn = $("#auth-submit");
+  btn.disabled = true;
   try {
-    const EXPECTED_API_VERSION = 13;
+    await api(`/api/auth/${authMode === "setup" ? "setup" : "login"}`,
+      { method: "POST", body: JSON.stringify({ pin }) });
+    hideAuthOverlay();
+    if (authMode === "setup") toast("PIN belirlendi — uygulama artık korunuyor ✓");
+    bootApp();
+  } catch (e) {
+    err.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("#auth-submit").onclick = submitAuth;
+$("#auth-pin").onkeydown = (e) => {
+  if (e.key !== "Enter") return;
+  if (authMode === "setup") $("#auth-pin2").focus(); else submitAuth();
+};
+$("#auth-pin2").onkeydown = (e) => { if (e.key === "Enter") submitAuth(); };
+
+// ---- Başlatma ----
+
+async function bootApp() {
+  try {
+    const EXPECTED_API_VERSION = 14;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);
@@ -1990,4 +2050,15 @@ $("#cal-src-add").onclick = async () => {
     }
   } catch { /* yoksay */ }
   loadEmails().catch((e) => toast(e.message, true));
+}
+
+(async function init() {
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }
+  let st = { setup: true, authed: true };
+  try { st = await api("/api/auth/status"); } catch { /* sunucu eski olabilir */ }
+  if (!st.setup) { showAuthOverlay("setup"); return; }
+  if (!st.authed) { showAuthOverlay("login"); return; }
+  bootApp();
 })();

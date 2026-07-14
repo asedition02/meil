@@ -111,6 +111,8 @@ Gmail (IMAP) ──► Mail çekilir ──► Ekler dataroom'a kaydedilir
 
 ## Güvenlik notları
 
+- Uygulama **PIN ile korunur**: ilk açılışta PIN belirlersiniz; sonraki her girişte sorulur. PIN, PBKDF2-SHA256 ile özetlenir (düz metin saklanmaz); 5 hatalı denemede 60 saniye kilit devreye girer. Oturum 30 gün hatırlanır. Tüm API uçları oturum ister — yalnızca dataroom paylaşım linkleri (tasarım gereği) açıktır.
+- **Telefona kurulum (PWA):** Sunucuyu `--host 0.0.0.0` ile başlatıp iPhone'da Safari → Paylaş → **Ana Ekrana Ekle** deyin; Meil kendi ikonuyla tam ekran uygulama gibi açılır. App Store planı için `docs/APP_STORE_YOL_HARITASI.md` dosyasına bakın.
 - Hesap ve takvim şifreleri veritabanında **şifreli** (Fernet/AES) saklanır; düz metin tutulmaz. Eski kayıtlar ilk açılışta otomatik şifrelenir.
 - Şifreleme anahtarı öncelikle `MEIL_SECRET_KEY` ortam değişkeninden okunur; tanımlı değilse `data/secret.key` otomatik üretilir. Anahtarı `.env`'e taşımanız önerilir — böylece `meil.db` dosyası tek başına sızsa bile şifreler çözülemez. **Anahtarı kaybederseniz** kayıtlı şifreler geri getirilemez; hesapları arayüzden yeniden eklemeniz gerekir.
 - `.env` dosyası `.gitignore`'dadır — şifrelerinizi asla commit etmeyin.
