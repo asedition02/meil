@@ -42,5 +42,10 @@ USER_NAME = os.environ.get("USER_NAME", "")
 MS_CLIENT_ID = os.environ.get("MS_CLIENT_ID", "").strip() or "2fae9a13-5d84-42f9-bf8b-ff4085924a42"
 MS_TENANT = os.environ.get("MS_TENANT", "common").strip() or "common"
 
+# Üretim modu: TLS/HTTPS, secure cookies, HSTS, vb. — Caddy gibi ters proxy
+# arkasında VPS'ye kurulum için True olmalıdır. Yerel geliştirme için False.
+# production = True → set_cookie'de secure=True, SameSite=Strict, HSTS başlığı ekler.
+PRODUCTION = os.environ.get("PRODUCTION", "").lower() in ("true", "1", "yes")
+
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DATAROOM_DIR.mkdir(parents=True, exist_ok=True)

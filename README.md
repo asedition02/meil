@@ -10,6 +10,8 @@ Microsoft Teams görünümlü arayüzüyle **birden fazla mail hesabına** (Gmai
 
 ## Kurulum
 
+### Yerel Geliştirme
+
 ```bash
 # 1. Bağımlılıkları yükleyin
 pip install -r requirements.txt
@@ -25,6 +27,10 @@ uvicorn app.main:app --port 8000 --reload
 > **Güncelleme sonrası:** `git pull` yaptıysanız `pip install -r requirements.txt` çalıştırın ve sunucuyu **yeniden başlatın** — aksi halde arayüz yenilenir ama API eski kalır ve "Method Not Allowed" benzeri hatalar görürsünüz (`--reload` ile başlattıysanız otomatik yenilenir).
 
 Tarayıcıda **http://localhost:8000** adresini açın:
+
+### Üretim Dağıtımı (VPS, PWA, iPhone Kurulumu)
+
+İphone veya Android'e "uygulama gibi" kurulmasını ve https://meil.example.com adresiyle erişilmesini istiyorsanız **[docs/PHASE2_DEPLOYMENT.md](docs/PHASE2_DEPLOYMENT.md)** rehberine bakın. Caddy + Systemd + Let's Encrypt ile adım adım kurulum anlatılıyor.
 
 1. **Hesaplar** sekmesinden mail hesaplarınızı ekleyin — sağlayıcı seçin (Gmail, Outlook / Microsoft 365, Yahoo, Yandex) veya "Şirket / Özel" ile kendi IMAP/SMTP sunucunuzu girin. Uygulama kaydetmeden önce bağlantıyı test eder.
 2. Sağ üstteki **"⟳ Eşitle"** butonuna tıklayın — tüm hesapların gelen kutuları taranır ve tasnif edilir.

@@ -48,6 +48,8 @@ async def security_middleware(request: Request, call_next):
     response.headers.setdefault("Referrer-Policy", "same-origin")
     if not path.startswith("/share/"):
         response.headers.setdefault("X-Frame-Options", "DENY")
+    if config.PRODUCTION:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
 
@@ -145,7 +147,9 @@ def _set_session_cookie(response: Response, token: str):
     response.set_cookie(
         auth.SESSION_COOKIE, token,
         max_age=auth.SESSION_DAYS * 86400,
-        httponly=True, samesite="lax",
+        httponly=True,
+        samesite="strict" if config.PRODUCTION else "lax",
+        secure=config.PRODUCTION,
     )
 
 
