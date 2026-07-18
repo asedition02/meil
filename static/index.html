@@ -28,7 +28,19 @@
         <span>Eşitle</span>
       </button>
       <button id="theme-toggle" class="icon-btn" title="Tema değiştir"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>
-      <div class="avatar small" id="me-avatar">M</div>
+      <div class="user-wrap">
+        <button class="avatar small" id="me-avatar" title="Hesap ve çıkış">M</button>
+        <div id="user-menu" class="user-menu" hidden>
+          <div class="user-menu-head">
+            <div class="avatar small">M</div>
+            <div class="user-menu-id"><b>Meil</b><span>Oturum açık</span></div>
+          </div>
+          <button id="logout-btn" class="user-menu-item">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
+            Çıkış Yap
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 

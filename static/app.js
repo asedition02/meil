@@ -2029,6 +2029,22 @@ $("#auth-pin").onkeydown = (e) => {
 };
 $("#auth-pin2").onkeydown = (e) => { if (e.key === "Enter") submitAuth(); };
 
+// ---- Kullanıcı menüsü / çıkış ----
+
+(function setupUserMenu() {
+  const avatar = $("#me-avatar");
+  const menu = $("#user-menu");
+  if (!avatar || !menu) return;
+  avatar.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
+  menu.onclick = (e) => e.stopPropagation();
+  document.addEventListener("click", () => { menu.hidden = true; });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") menu.hidden = true; });
+  $("#logout-btn").onclick = async () => {
+    try { await api("/api/auth/logout", { method: "POST" }); } catch { /* yoksay */ }
+    window.location.href = "/";   // landing sayfasına dön
+  };
+})();
+
 // ---- Başlatma ----
 
 async function bootApp() {
