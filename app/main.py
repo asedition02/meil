@@ -1187,4 +1187,19 @@ def status():
     }
 
 
+@app.get("/")
+def landing():
+    """Tanıtım (landing) sayfası — ziyaretçiye ürünü anlatır, /app'e yönlendirir."""
+    return FileResponse(config.BASE_DIR / "static" / "landing.html")
+
+
+@app.get("/app")
+def app_shell():
+    """Asıl uygulama arayüzü (SPA kabuğu)."""
+    return FileResponse(config.BASE_DIR / "static" / "index.html")
+
+
+# Diğer tüm statik varlıklar (style.css, app.js, manifest.json, sw.js, icons/…)
+# kök altından sunulur. Landing ve /app yukarıda açıkça tanımlandığı için
+# bu mount yalnızca varlık dosyalarına hizmet eder.
 app.mount("/", StaticFiles(directory=config.BASE_DIR / "static", html=True), name="static")

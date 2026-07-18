@@ -2,7 +2,7 @@
   "name": "Meil — E-posta Asistanı",
   "short_name": "Meil",
   "description": "AI destekli posta, takvim ve dataroom — verisi sizde kalan kişisel asistan.",
-  "start_url": "/",
+  "start_url": "/app",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f8fafc",
