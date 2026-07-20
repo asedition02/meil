@@ -270,9 +270,15 @@
       <div class="auth-brand"><span class="brand-mark">M</span></div>
       <h2 id="auth-title">Meil</h2>
       <p class="auth-desc" id="auth-desc"></p>
-      <input id="auth-pin" type="password" inputmode="numeric" autocomplete="current-password"
-             placeholder="PIN" maxlength="64">
-      <input id="auth-pin2" type="password" placeholder="PIN (tekrar)" maxlength="64" style="display:none">
+      <div class="auth-field">
+        <input id="auth-pin" type="password" autocomplete="current-password"
+               placeholder="Parola" maxlength="128" spellcheck="false">
+        <button type="button" id="auth-toggle" class="auth-eye" aria-label="Parolayı göster/gizle" title="Göster / Gizle">👁</button>
+      </div>
+      <div id="auth-strength" class="auth-strength" style="display:none"><i></i><span></span></div>
+      <input id="auth-pin2" type="password" autocomplete="new-password"
+             placeholder="Parola (tekrar)" maxlength="128" spellcheck="false" style="display:none">
+      <p class="auth-caps" id="auth-caps" style="display:none">⚠️ Caps Lock açık</p>
       <button class="pill accent" id="auth-submit">Giriş</button>
       <p class="auth-error" id="auth-error"></p>
     </div>

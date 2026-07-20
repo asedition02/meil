@@ -1981,31 +1981,81 @@ let authMode = "login"; // login | setup
 
 function showAuthOverlay(mode) {
   authMode = mode;
+  const setup = mode === "setup";
   $("#auth-overlay").style.display = "flex";
   $("#auth-error").textContent = "";
+  $("#auth-caps").style.display = "none";
   $("#auth-pin").value = "";
   $("#auth-pin2").value = "";
-  $("#auth-pin2").style.display = mode === "setup" ? "" : "none";
-  $("#auth-title").textContent = mode === "setup" ? "Meil'e Hoş Geldiniz" : "Meil";
-  $("#auth-desc").textContent = mode === "setup"
-    ? "Uygulamayı korumak için bir PIN belirleyin (en az 4 karakter). Bu PIN her girişte sorulacak."
-    : "Devam etmek için PIN'inizi girin.";
-  $("#auth-submit").textContent = mode === "setup" ? "PIN'i Belirle" : "Giriş";
-  $("#auth-pin").focus();
+  $("#auth-pin2").style.display = setup ? "" : "none";
+  $("#auth-strength").style.display = setup ? "" : "none";
+  $("#auth-pin").setAttribute("autocomplete", setup ? "new-password" : "current-password");
+  $("#auth-pin").placeholder = setup ? "Yeni parola (en az 8 karakter)" : "Parola";
+  $("#auth-title").textContent = setup ? "Meil'e Hoş Geldiniz" : "Meil";
+  $("#auth-desc").textContent = setup
+    ? "Uygulamanızı korumak için güçlü bir parola belirleyin. Mailleriniz ve belgeleriniz bu parolanın arkasında durur."
+    : "Devam etmek için parolanızı girin.";
+  $("#auth-submit").textContent = setup ? "Parolayı Belirle" : "Giriş";
+  updateStrength();
+  setTimeout(() => $("#auth-pin").focus(), 30);
 }
 
 function hideAuthOverlay() {
+  clearInterval(lockTimer);
   $("#auth-overlay").style.display = "none";
 }
 
+function pwStrength(pw) {
+  let s = 0;
+  if (pw.length >= 8) s++;
+  if (pw.length >= 12) s++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) s++;
+  if (/\d/.test(pw)) s++;
+  if (/[^A-Za-z0-9]/.test(pw)) s++;
+  return Math.min(s, 4); // 0..4
+}
+
+function updateStrength() {
+  if (authMode !== "setup") return;
+  const pw = $("#auth-pin").value;
+  const el = $("#auth-strength");
+  const lvl = pwStrength(pw);
+  const labels = ["Çok zayıf", "Zayıf", "Orta", "İyi", "Güçlü"];
+  const colors = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#16a34a"];
+  el.querySelector("span").textContent = pw ? labels[lvl] : "";
+  el.style.setProperty("--sw", (pw ? (lvl + 1) * 20 : 0) + "%");
+  el.style.setProperty("--sc", colors[lvl]);
+}
+
+let lockTimer = null;
+function startLockCountdown(sec) {
+  clearInterval(lockTimer);
+  const err = $("#auth-error");
+  const btn = $("#auth-submit");
+  btn.disabled = true;
+  const tick = () => {
+    if (sec <= 0) {
+      clearInterval(lockTimer);
+      err.textContent = "";
+      btn.disabled = false;
+      return;
+    }
+    err.textContent = `Çok fazla hatalı deneme. ${sec} saniye sonra tekrar deneyin.`;
+    sec--;
+  };
+  tick();
+  lockTimer = setInterval(tick, 1000);
+}
+
 async function submitAuth() {
-  const pin = $("#auth-pin").value.trim();
+  const pin = $("#auth-pin").value;
   const err = $("#auth-error");
   err.textContent = "";
-  if (pin.length < 4) { err.textContent = "PIN en az 4 karakter olmalı"; return; }
-  if (authMode === "setup" && pin !== $("#auth-pin2").value.trim()) {
-    err.textContent = "PIN'ler eşleşmiyor";
-    return;
+  if (authMode === "setup") {
+    if (pin.length < 8) { err.textContent = "Parola en az 8 karakter olmalı"; return; }
+    if (pin !== $("#auth-pin2").value) { err.textContent = "Parolalar eşleşmiyor"; return; }
+  } else if (!pin) {
+    err.textContent = "Parolanızı girin"; return;
   }
   const btn = $("#auth-submit");
   btn.disabled = true;
@@ -2013,15 +2063,31 @@ async function submitAuth() {
     await api(`/api/auth/${authMode === "setup" ? "setup" : "login"}`,
       { method: "POST", body: JSON.stringify({ pin }) });
     hideAuthOverlay();
-    if (authMode === "setup") toast("PIN belirlendi — uygulama artık korunuyor ✓");
+    if (authMode === "setup") toast("Parola belirlendi — uygulama artık korunuyor ✓");
     bootApp();
   } catch (e) {
     err.textContent = e.message;
+    const m = /(\d+)\s*saniye/.exec(e.message || "");
+    if (m) startLockCountdown(parseInt(m[1], 10));
   } finally {
-    btn.disabled = false;
+    if (!lockTimer) btn.disabled = false;
   }
 }
 
+function capsCheck(e) {
+  const on = e.getModifierState && e.getModifierState("CapsLock");
+  $("#auth-caps").style.display = on ? "" : "none";
+}
+
+$("#auth-pin").addEventListener("input", updateStrength);
+$("#auth-pin").addEventListener("keyup", capsCheck);
+$("#auth-pin2").addEventListener("keyup", capsCheck);
+$("#auth-toggle").onclick = () => {
+  const f = $("#auth-pin"), f2 = $("#auth-pin2");
+  const show = f.type === "password";
+  f.type = f2.type = show ? "text" : "password";
+  $("#auth-toggle").textContent = show ? "🙈" : "👁";
+};
 $("#auth-submit").onclick = submitAuth;
 $("#auth-pin").onkeydown = (e) => {
   if (e.key !== "Enter") return;

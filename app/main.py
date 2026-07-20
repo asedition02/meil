@@ -162,12 +162,14 @@ def auth_status(request: Request):
 
 @app.post("/api/auth/setup")
 def auth_setup(req: PinRequest, response: Response):
-    """İlk kurulum: PIN belirle ve oturum aç."""
+    """İlk kurulum: parola belirle ve oturum aç."""
     if auth.pin_is_set():
-        raise HTTPException(status_code=400, detail="PIN zaten belirlenmiş")
-    if len(req.pin.strip()) < 4:
-        raise HTTPException(status_code=400, detail="PIN en az 4 karakter olmalı")
-    auth.set_pin(req.pin.strip())
+        raise HTTPException(status_code=400, detail="Parola zaten belirlenmiş")
+    pw = req.pin  # boşlukları kırpmıyoruz — parolanın parçası olabilir
+    problem = auth.password_problem(pw)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    auth.set_pin(pw)
     _set_session_cookie(response, auth.create_session())
     return {"ok": True}
 
@@ -177,12 +179,16 @@ def auth_login(req: PinRequest, request: Request, response: Response):
     ip = request.client.host if request.client else "?"
     wait = auth.is_locked(ip)
     if wait:
+        log.warning("Giriş kilidi devrede: ip=%s kalan=%ss", ip, wait)
         raise HTTPException(status_code=429,
-                            detail=f"Çok fazla hatalı deneme — {wait} saniye bekleyin")
-    if not auth.verify_pin(req.pin.strip()):
+                            detail=f"Çok fazla hatalı deneme. {wait} saniye sonra tekrar deneyin.")
+    if not auth.verify_pin(req.pin):
         auth.record_failure(ip)
-        raise HTTPException(status_code=401, detail="PIN hatalı")
+        log.warning("Başarısız giriş denemesi: ip=%s", ip)
+        # Genel mesaj — hesabın varlığı/parolanın uzunluğu vb. sızdırılmaz
+        raise HTTPException(status_code=401, detail="Parola hatalı")
     auth.clear_failures(ip)
+    log.info("Başarılı giriş: ip=%s", ip)
     _set_session_cookie(response, auth.create_session())
     return {"ok": True}
 
