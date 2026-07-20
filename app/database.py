@@ -267,6 +267,11 @@ def set_setting(key: str, value: str):
         )
 
 
+def delete_setting(key: str):
+    with get_db() as db:
+        db.execute("DELETE FROM settings WHERE key = ?", (key,))
+
+
 def create_session(token: str, days: int):
     with get_db() as db:
         db.execute(

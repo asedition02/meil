@@ -1982,11 +1982,16 @@ let authMode = "login"; // login | setup
 function showAuthOverlay(mode) {
   authMode = mode;
   const setup = mode === "setup";
+  twofaStage = false;
+  pendingPin = "";
   $("#auth-overlay").style.display = "flex";
   $("#auth-error").textContent = "";
   $("#auth-caps").style.display = "none";
   $("#auth-pin").value = "";
   $("#auth-pin2").value = "";
+  $("#auth-code").value = "";
+  $("#auth-code").style.display = "none";
+  document.querySelector(".auth-field").style.display = "";
   $("#auth-pin2").style.display = setup ? "" : "none";
   $("#auth-strength").style.display = setup ? "" : "none";
   $("#auth-pin").setAttribute("autocomplete", setup ? "new-password" : "current-password");
@@ -2028,6 +2033,24 @@ function updateStrength() {
 }
 
 let lockTimer = null;
+let twofaStage = false;
+let pendingPin = "";
+
+function enterTwofaStage() {
+  twofaStage = true;
+  document.querySelector(".auth-field").style.display = "none";
+  $("#auth-strength").style.display = "none";
+  $("#auth-pin2").style.display = "none";
+  $("#auth-caps").style.display = "none";
+  $("#auth-code").style.display = "";
+  $("#auth-code").value = "";
+  $("#auth-title").textContent = "İki adımlı doğrulama";
+  $("#auth-desc").textContent = "Authenticator uygulamanızdaki 6 haneli kodu (veya bir kurtarma kodunu) girin.";
+  $("#auth-submit").textContent = "Doğrula";
+  $("#auth-error").textContent = "";
+  setTimeout(() => $("#auth-code").focus(), 30);
+}
+
 function startLockCountdown(sec) {
   clearInterval(lockTimer);
   const err = $("#auth-error");
@@ -2048,20 +2071,46 @@ function startLockCountdown(sec) {
 }
 
 async function submitAuth() {
-  const pin = $("#auth-pin").value;
   const err = $("#auth-error");
+  const btn = $("#auth-submit");
   err.textContent = "";
+
+  // 2FA ikinci adımı — parola zaten doğrulandı, kod bekleniyor
+  if (authMode === "login" && twofaStage) {
+    const code = $("#auth-code").value.trim();
+    if (!code) { err.textContent = "Doğrulama kodunu girin"; return; }
+    btn.disabled = true;
+    try {
+      await api("/api/auth/login", { method: "POST", body: JSON.stringify({ pin: pendingPin, code }) });
+      hideAuthOverlay();
+      bootApp();
+    } catch (e) {
+      err.textContent = e.message;
+      const m = /(\d+)\s*saniye/.exec(e.message || "");
+      if (m) startLockCountdown(parseInt(m[1], 10));
+    } finally {
+      if (!lockTimer) btn.disabled = false;
+    }
+    return;
+  }
+
+  const pin = $("#auth-pin").value;
   if (authMode === "setup") {
     if (pin.length < 8) { err.textContent = "Parola en az 8 karakter olmalı"; return; }
     if (pin !== $("#auth-pin2").value) { err.textContent = "Parolalar eşleşmiyor"; return; }
   } else if (!pin) {
     err.textContent = "Parolanızı girin"; return;
   }
-  const btn = $("#auth-submit");
   btn.disabled = true;
   try {
-    await api(`/api/auth/${authMode === "setup" ? "setup" : "login"}`,
+    const r = await api(`/api/auth/${authMode === "setup" ? "setup" : "login"}`,
       { method: "POST", body: JSON.stringify({ pin }) });
+    if (authMode === "login" && r && r.twofa_required) {
+      pendingPin = pin;
+      enterTwofaStage();
+      btn.disabled = false;
+      return;
+    }
     hideAuthOverlay();
     if (authMode === "setup") toast("Parola belirlendi — uygulama artık korunuyor ✓");
     bootApp();
@@ -2070,7 +2119,7 @@ async function submitAuth() {
     const m = /(\d+)\s*saniye/.exec(e.message || "");
     if (m) startLockCountdown(parseInt(m[1], 10));
   } finally {
-    if (!lockTimer) btn.disabled = false;
+    if (!lockTimer && !twofaStage) btn.disabled = false;
   }
 }
 
@@ -2094,6 +2143,111 @@ $("#auth-pin").onkeydown = (e) => {
   if (authMode === "setup") $("#auth-pin2").focus(); else submitAuth();
 };
 $("#auth-pin2").onkeydown = (e) => { if (e.key === "Enter") submitAuth(); };
+$("#auth-code").onkeydown = (e) => { if (e.key === "Enter") submitAuth(); };
+
+// ---- İki adımlı doğrulama (modal) ----
+
+const twofaOverlay = $("#twofa-overlay");
+function closeTwofa() { twofaOverlay.hidden = true; }
+$("#twofa-close").onclick = closeTwofa;
+twofaOverlay.addEventListener("click", (e) => { if (e.target === twofaOverlay) closeTwofa(); });
+
+async function refreshTwofaMenuTag() {
+  try {
+    const st = await api("/api/2fa/status");
+    const tag = $("#twofa-state");
+    if (tag) { tag.textContent = st.enabled ? "Açık" : "Kapalı"; tag.classList.toggle("on", st.enabled); }
+  } catch { /* yoksay */ }
+}
+
+async function openTwofa() {
+  $("#user-menu").hidden = true;
+  twofaOverlay.hidden = false;
+  const body = $("#twofa-body");
+  body.innerHTML = '<p class="modal-muted">Yükleniyor…</p>';
+  try {
+    const st = await api("/api/2fa/status");
+    if (st.enabled) renderTwofaOn(st); else renderTwofaOff();
+  } catch (e) {
+    body.innerHTML = `<p class="auth-error">${esc(e.message)}</p>`;
+  }
+}
+
+function renderTwofaOff() {
+  $("#twofa-body").innerHTML = `
+    <p class="modal-muted">Parolanıza ek bir katman: girişte telefonunuzdaki Authenticator uygulamasından 6 haneli bir kod istenir. Böylece parolanız çalınsa bile hesabınıza girilemez.</p>
+    <button class="pill accent modal-wide" id="tf-start">Etkinleştir</button>`;
+  $("#tf-start").onclick = startTwofaSetup;
+}
+
+async function startTwofaSetup() {
+  const body = $("#twofa-body");
+  body.innerHTML = '<p class="modal-muted">Hazırlanıyor…</p>';
+  let r;
+  try { r = await api("/api/2fa/setup", { method: "POST" }); }
+  catch (e) { body.innerHTML = `<p class="auth-error">${esc(e.message)}</p>`; return; }
+  body.innerHTML = `
+    <p class="modal-muted"><b>1.</b> Authenticator uygulamasında (Google Authenticator, Authy, 1Password…) QR'ı okutun veya anahtarı elle girin.</p>
+    <div class="tf-qr">${r.qr_svg}</div>
+    <div class="tf-secret"><span>Anahtar</span><code>${esc(r.secret)}</code></div>
+    <p class="modal-muted"><b>2.</b> Uygulamadaki 6 haneli kodu girin:</p>
+    <input id="tf-code" class="tf-input" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code">
+    <p class="auth-error" id="tf-err"></p>
+    <button class="pill accent modal-wide" id="tf-verify">Doğrula ve Aç</button>`;
+  const codeEl = $("#tf-code");
+  setTimeout(() => codeEl.focus(), 30);
+  const go = async () => {
+    const code = codeEl.value.trim();
+    if (code.length < 6) { $("#tf-err").textContent = "6 haneli kodu girin"; return; }
+    $("#tf-verify").disabled = true;
+    try {
+      const res = await api("/api/2fa/enable", { method: "POST", body: JSON.stringify({ code }) });
+      renderRecovery(res.recovery_codes);
+      refreshTwofaMenuTag();
+    } catch (e) { $("#tf-err").textContent = e.message; $("#tf-verify").disabled = false; }
+  };
+  $("#tf-verify").onclick = go;
+  codeEl.onkeydown = (e) => { if (e.key === "Enter") go(); };
+}
+
+function renderRecovery(codes) {
+  $("#twofa-body").innerHTML = `
+    <p class="tf-ok">✓ İki adımlı doğrulama açıldı</p>
+    <p class="modal-muted">Bu <b>kurtarma kodlarını</b> güvenli bir yere kaydedin. Telefonunuza erişemezseniz biriyle giriş yapabilirsiniz. Her kod <b>tek kullanımlıktır</b> ve bu ekran bir daha gösterilmez.</p>
+    <div class="tf-codes">${codes.map((c) => `<code>${esc(c)}</code>`).join("")}</div>
+    <button class="pill modal-wide" id="tf-copy">Kodları Kopyala</button>
+    <button class="pill accent modal-wide" id="tf-done">Kaydettim, Bitti</button>`;
+  $("#tf-copy").onclick = () => {
+    (navigator.clipboard?.writeText(codes.join("\n")) || Promise.reject()).then(
+      () => toast("Kurtarma kodları kopyalandı"), () => toast("Kopyalanamadı — elle kaydedin", true));
+  };
+  $("#tf-done").onclick = closeTwofa;
+}
+
+function renderTwofaOn(st) {
+  $("#twofa-body").innerHTML = `
+    <p class="tf-ok">✓ İki adımlı doğrulama açık</p>
+    <p class="modal-muted">Girişte parolanıza ek olarak doğrulama kodu istenir. Kalan kurtarma kodu: <b>${st.recovery_left}</b>.</p>
+    <p class="modal-muted">Kapatmak için parolanızı girin:</p>
+    <input id="tf-pass" class="tf-input" type="password" placeholder="Parola" autocomplete="current-password">
+    <p class="auth-error" id="tf-err"></p>
+    <button class="pill danger modal-wide" id="tf-off">Kapat</button>`;
+  const go = async () => {
+    const pin = $("#tf-pass").value;
+    if (!pin) { $("#tf-err").textContent = "Parolanızı girin"; return; }
+    $("#tf-off").disabled = true;
+    try {
+      await api("/api/2fa/disable", { method: "POST", body: JSON.stringify({ pin }) });
+      toast("İki adımlı doğrulama kapatıldı");
+      refreshTwofaMenuTag();
+      closeTwofa();
+    } catch (e) { $("#tf-err").textContent = e.message; $("#tf-off").disabled = false; }
+  };
+  $("#tf-off").onclick = go;
+  $("#tf-pass").onkeydown = (e) => { if (e.key === "Enter") go(); };
+}
+
+$("#twofa-btn").onclick = openTwofa;
 
 // ---- Kullanıcı menüsü / çıkış ----
 
@@ -2101,7 +2255,11 @@ $("#auth-pin2").onkeydown = (e) => { if (e.key === "Enter") submitAuth(); };
   const avatar = $("#me-avatar");
   const menu = $("#user-menu");
   if (!avatar || !menu) return;
-  avatar.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
+  avatar.onclick = (e) => {
+    e.stopPropagation();
+    menu.hidden = !menu.hidden;
+    if (!menu.hidden) refreshTwofaMenuTag();
+  };
   menu.onclick = (e) => e.stopPropagation();
   document.addEventListener("click", () => { menu.hidden = true; });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") menu.hidden = true; });

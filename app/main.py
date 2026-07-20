@@ -141,6 +141,11 @@ def _account_dict(req: AccountRequest) -> dict:
 
 class PinRequest(BaseModel):
     pin: str
+    code: str | None = None   # 2FA açıksa girişin ikinci adımı
+
+
+class CodeRequest(BaseModel):
+    code: str
 
 
 def _set_session_cookie(response: Response, token: str):
@@ -187,6 +192,14 @@ def auth_login(req: PinRequest, request: Request, response: Response):
         log.warning("Başarısız giriş denemesi: ip=%s", ip)
         # Genel mesaj — hesabın varlığı/parolanın uzunluğu vb. sızdırılmaz
         raise HTTPException(status_code=401, detail="Parola hatalı")
+    # Parola doğru — 2FA açıksa ikinci adımı iste
+    if auth.twofa_enabled():
+        if not req.code:
+            return {"twofa_required": True}
+        if not auth.twofa_check(req.code):
+            auth.record_failure(ip)
+            log.warning("Başarısız 2FA denemesi: ip=%s", ip)
+            raise HTTPException(status_code=401, detail="Doğrulama kodu hatalı")
     auth.clear_failures(ip)
     log.info("Başarılı giriş: ip=%s", ip)
     _set_session_cookie(response, auth.create_session())
@@ -197,6 +210,53 @@ def auth_login(req: PinRequest, request: Request, response: Response):
 def auth_logout(request: Request, response: Response):
     auth.destroy_session(request.cookies.get(auth.SESSION_COOKIE))
     response.delete_cookie(auth.SESSION_COOKIE)
+    return {"ok": True}
+
+
+# ---- İki adımlı doğrulama yönetimi (oturum gerektirir; middleware korur) ----
+
+def _qr_svg(uri: str) -> str:
+    import io
+    import qrcode
+    import qrcode.image.svg
+    img = qrcode.make(uri, image_factory=qrcode.image.svg.SvgPathImage,
+                      box_size=9, border=2)
+    buf = io.BytesIO()
+    img.save(buf)
+    svg = buf.getvalue().decode()
+    # XML önbildirimini at (HTML içine gömülecek)
+    return svg.split("?>", 1)[-1].strip() if svg.startswith("<?xml") else svg
+
+
+@app.get("/api/2fa/status")
+def twofa_status():
+    return {"enabled": auth.twofa_enabled(), "recovery_left": auth.twofa_recovery_left()}
+
+
+@app.post("/api/2fa/setup")
+def twofa_setup():
+    """Yeni gizli anahtar üretir (henüz etkin değil), QR + anahtar döner."""
+    if auth.twofa_enabled():
+        raise HTTPException(status_code=400, detail="İki adımlı doğrulama zaten açık")
+    secret, uri = auth.twofa_begin()
+    return {"secret": secret, "otpauth": uri, "qr_svg": _qr_svg(uri)}
+
+
+@app.post("/api/2fa/enable")
+def twofa_enable(req: CodeRequest):
+    """Bekleyen anahtarı doğrular, etkinleştirir ve kurtarma kodlarını döner."""
+    codes = auth.twofa_activate(req.code)
+    if codes is None:
+        raise HTTPException(status_code=400, detail="Kod doğrulanamadı — tekrar deneyin")
+    return {"ok": True, "recovery_codes": codes}
+
+
+@app.post("/api/2fa/disable")
+def twofa_disable(req: PinRequest):
+    """2FA'yı kapatır — parola tekrar istenir (oturum çalınsa bile kapatılamasın)."""
+    if not auth.verify_pin(req.pin):
+        raise HTTPException(status_code=401, detail="Parola hatalı")
+    auth.twofa_disable()
     return {"ok": True}
 
 

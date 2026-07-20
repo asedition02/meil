@@ -13,11 +13,12 @@ Güvenlik notları:
   12+ hata → 30 dk. Süre son denemeye göre işler (kilitliyken deneme süreyi uzatır).
 """
 import hashlib
+import json
 import math
 import secrets
 import time
 
-from . import database
+from . import crypto, database, totp
 
 SESSION_COOKIE = "meil_session"
 SESSION_DAYS = 30
@@ -138,3 +139,79 @@ def session_valid(token: str | None) -> bool:
 def destroy_session(token: str | None) -> None:
     if token:
         database.delete_session(token)
+
+
+# ---- İki adımlı doğrulama (TOTP) ----
+# Gizli anahtar Fernet ile şifreli saklanır (crypto). Kurtarma kodları yalnızca
+# SHA-256 özet olarak tutulur ve tek kullanımlıktır.
+
+def twofa_enabled() -> bool:
+    return bool(database.get_setting("totp_secret"))
+
+
+def twofa_begin(account: str = "meil") -> tuple[str, str]:
+    """Yeni bir gizli anahtar üretir, 'pending' olarak (şifreli) saklar.
+    (secret, otpauth_uri) döner — henüz etkin değil, doğrulanması gerekir."""
+    secret = totp.generate_secret()
+    database.set_setting("totp_pending", crypto.encrypt_secret(secret))
+    return secret, totp.provisioning_uri(secret, account)
+
+
+def twofa_activate(code: str) -> list[str] | None:
+    """Bekleyen anahtarı verilen kodla doğrular; başarılıysa etkinleştirir ve
+    kurtarma kodlarını (düz metin, yalnızca bir kez) döner. Hata → None."""
+    pend = database.get_setting("totp_pending")
+    if not pend:
+        return None
+    secret = crypto.decrypt_secret(pend)
+    if not totp.verify(secret, code):
+        return None
+    database.set_setting("totp_secret", crypto.encrypt_secret(secret))
+    database.delete_setting("totp_pending")
+    codes = totp.generate_recovery_codes()
+    database.set_setting("totp_recovery",
+                         json.dumps([totp.hash_recovery(c) for c in codes]))
+    return codes
+
+
+def twofa_check(code: str) -> bool:
+    """Giriş sırasında: TOTP kodu ya da (tek kullanımlık) kurtarma kodu doğru mu."""
+    stored = database.get_setting("totp_secret")
+    if not stored:
+        return True  # 2FA kapalı
+    secret = crypto.decrypt_secret(stored)
+    if totp.verify(secret, code):
+        return True
+    return _use_recovery(code)
+
+
+def _use_recovery(code: str) -> bool:
+    raw = database.get_setting("totp_recovery")
+    if not raw:
+        return False
+    try:
+        hashes = json.loads(raw)
+    except (ValueError, TypeError):
+        return False
+    h = totp.hash_recovery(code)
+    for stored in hashes:
+        if secrets.compare_digest(stored, h):
+            hashes.remove(stored)
+            database.set_setting("totp_recovery", json.dumps(hashes))
+            return True
+    return False
+
+
+def twofa_recovery_left() -> int:
+    raw = database.get_setting("totp_recovery")
+    if not raw:
+        return 0
+    try:
+        return len(json.loads(raw))
+    except (ValueError, TypeError):
+        return 0
+
+
+def twofa_disable() -> None:
+    for key in ("totp_secret", "totp_pending", "totp_recovery"):
+        database.delete_setting(key)

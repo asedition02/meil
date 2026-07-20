@@ -35,6 +35,11 @@
             <div class="avatar small">M</div>
             <div class="user-menu-id"><b>Meil</b><span>Oturum açık</span></div>
           </div>
+          <button id="twofa-btn" class="user-menu-item">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+            İki Adımlı Doğrulama
+            <span id="twofa-state" class="menu-tag">Kapalı</span>
+          </button>
           <button id="logout-btn" class="user-menu-item">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
             Çıkış Yap
@@ -278,9 +283,19 @@
       <div id="auth-strength" class="auth-strength" style="display:none"><i></i><span></span></div>
       <input id="auth-pin2" type="password" autocomplete="new-password"
              placeholder="Parola (tekrar)" maxlength="128" spellcheck="false" style="display:none">
+      <input id="auth-code" type="text" inputmode="numeric" autocomplete="one-time-code"
+             placeholder="6 haneli kod veya kurtarma kodu" maxlength="20" spellcheck="false" style="display:none">
       <p class="auth-caps" id="auth-caps" style="display:none">⚠️ Caps Lock açık</p>
       <button class="pill accent" id="auth-submit">Giriş</button>
       <p class="auth-error" id="auth-error"></p>
+    </div>
+  </div>
+
+  <div id="twofa-overlay" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <button class="modal-close" id="twofa-close" aria-label="Kapat">×</button>
+      <h3 class="modal-title">İki Adımlı Doğrulama</h3>
+      <div id="twofa-body"></div>
     </div>
   </div>
 

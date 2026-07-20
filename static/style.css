@@ -364,6 +364,60 @@ button.avatar:hover { filter: brightness(1.06); }
 #auth-panel .pill { justify-content: center; padding: 11px; font-size: 14px; }
 .auth-error { min-height: 18px; font-size: 12.5px; color: var(--red); font-weight: 600; }
 
+/* Kullanıcı menüsü etiketi */
+.menu-tag {
+  margin-left: auto; font-size: 10.5px; font-weight: 700; padding: 2px 8px;
+  border-radius: 999px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+}
+.menu-tag.on { background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
+
+/* Genel modal (2FA) */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 420; display: flex; align-items: center; justify-content: center;
+  background: rgba(15, 23, 42, 0.55); backdrop-filter: blur(3px); padding: 20px;
+}
+.modal-overlay[hidden] { display: none; }
+.modal-card {
+  position: relative; width: min(420px, 94vw); max-height: 88vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: var(--shadow-lg); padding: 26px 24px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.modal-close {
+  position: absolute; top: 12px; right: 14px; border: none; background: transparent;
+  font-size: 22px; line-height: 1; color: var(--muted); cursor: pointer; width: 30px; height: 30px; border-radius: 8px;
+}
+.modal-close:hover { background: var(--panel-2); color: var(--text); }
+.modal-title { font-size: 18px; font-weight: 750; letter-spacing: -0.2px; }
+.modal-muted { font-size: 13px; color: var(--muted); line-height: 1.55; }
+.modal-muted b { color: var(--text); font-weight: 650; }
+.pill.modal-wide { justify-content: center; width: 100%; padding: 11px; font-size: 14px; }
+.pill.danger { background: var(--red); color: #fff; }
+.pill.danger:hover { filter: brightness(1.06); }
+.tf-qr {
+  align-self: center; width: 190px; height: 190px; padding: 10px; background: #fff;
+  border-radius: 12px; border: 1px solid var(--border);
+}
+.tf-qr svg { width: 100%; height: 100%; display: block; }
+.tf-secret {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px;
+}
+.tf-secret span { font-size: 11px; color: var(--muted); font-weight: 650; text-transform: uppercase; letter-spacing: .06em; }
+.tf-secret code { font-family: "Fira Code", monospace; font-size: 13px; letter-spacing: 1px; color: var(--text); word-break: break-all; }
+.tf-input {
+  width: 100%; padding: 11px 14px; font-size: 16px; text-align: center; letter-spacing: 3px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel-2);
+  color: var(--text); font-family: "Fira Code", monospace;
+}
+.tf-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.tf-codes {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+}
+.tf-codes code { font-family: "Fira Code", monospace; font-size: 13px; text-align: center; color: var(--text); }
+.tf-ok { font-size: 15px; font-weight: 700; color: var(--green, #16a34a); }
+
 /* Global arama paleti (Cmd+K) */
 #gs-overlay {
   position: fixed; inset: 0; z-index: 300;
