@@ -2249,6 +2249,53 @@ function renderTwofaOn(st) {
 
 $("#twofa-btn").onclick = openTwofa;
 
+// ---- Giriş kayıtları (güvenlik günlüğü) ----
+
+const logOverlay = $("#log-overlay");
+function closeLog() { logOverlay.hidden = true; }
+$("#log-close").onclick = closeLog;
+logOverlay.addEventListener("click", (e) => { if (e.target === logOverlay) closeLog(); });
+
+const EVENT_LABELS = {
+  login_success: ["Başarılı giriş", "ok"],
+  login_fail: ["Hatalı parola", "bad"],
+  twofa_fail: ["Hatalı 2FA kodu", "bad"],
+  lockout: ["Kilit — çok deneme", "warn"],
+  setup: ["Parola kuruldu", "ok"],
+  logout: ["Çıkış", "muted"],
+  "2fa_enabled": ["2FA açıldı", "ok"],
+  "2fa_disabled": ["2FA kapatıldı", "warn"],
+};
+function fmtLogTs(ts) {
+  try {
+    return new Date(ts.replace(" ", "T") + "Z")
+      .toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  } catch { return ts; }
+}
+async function openSecurityLog() {
+  $("#user-menu").hidden = true;
+  logOverlay.hidden = false;
+  const body = $("#log-body");
+  body.innerHTML = '<p class="modal-muted">Yükleniyor…</p>';
+  try {
+    const r = await api("/api/security/log");
+    const rows = r.entries || [];
+    if (!rows.length) { body.innerHTML = '<p class="modal-muted">Henüz kayıt yok.</p>'; return; }
+    body.innerHTML = `<div class="log-list">${rows.map((e) => {
+      const [label, cls] = EVENT_LABELS[e.event] || [e.event, "muted"];
+      return `<div class="log-row">
+        <span class="log-dot ${cls}"></span>
+        <span class="log-ev">${esc(label)}</span>
+        <span class="log-ip" title="${esc(e.user_agent || "")}">${esc(e.ip || "?")}</span>
+        <span class="log-ts">${esc(fmtLogTs(e.ts))}</span>
+      </div>`;
+    }).join("")}</div>`;
+  } catch (e) {
+    body.innerHTML = `<p class="auth-error">${esc(e.message)}</p>`;
+  }
+}
+$("#log-btn").onclick = openSecurityLog;
+
 // ---- Kullanıcı menüsü / çıkış ----
 
 (function setupUserMenu() {

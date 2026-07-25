@@ -40,6 +40,10 @@
             İki Adımlı Doğrulama
             <span id="twofa-state" class="menu-tag">Kapalı</span>
           </button>
+          <button id="log-btn" class="user-menu-item">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+            Giriş Kayıtları
+          </button>
           <button id="logout-btn" class="user-menu-item">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
             Çıkış Yap
@@ -296,6 +300,15 @@
       <button class="modal-close" id="twofa-close" aria-label="Kapat">×</button>
       <h3 class="modal-title">İki Adımlı Doğrulama</h3>
       <div id="twofa-body"></div>
+    </div>
+  </div>
+
+  <div id="log-overlay" class="modal-overlay" hidden>
+    <div class="modal-card modal-wide-card">
+      <button class="modal-close" id="log-close" aria-label="Kapat">×</button>
+      <h3 class="modal-title">Giriş Kayıtları</h3>
+      <p class="modal-muted">Son giriş denemeleri — kim, ne zaman, hangi IP'den, başarılı mı.</p>
+      <div id="log-body"></div>
     </div>
   </div>
 

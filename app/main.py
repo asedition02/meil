@@ -158,6 +158,22 @@ def _set_session_cookie(response: Response, token: str):
     )
 
 
+def _client_ip(request: Request) -> str:
+    """Gerçek istemci IP'si — Caddy/Nginx arkasında X-Forwarded-For ilk atlama."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "?"
+
+
+def _audit(request: Request, event: str, success: bool):
+    try:
+        database.add_auth_log(_client_ip(request),
+                              request.headers.get("user-agent", ""), event, success)
+    except Exception:  # günlükleme asla giriş akışını bozmasın
+        log.exception("auth_log yazılamadı")
+
+
 @app.get("/api/auth/status")
 def auth_status(request: Request):
     setup = auth.pin_is_set()
@@ -166,7 +182,7 @@ def auth_status(request: Request):
 
 
 @app.post("/api/auth/setup")
-def auth_setup(req: PinRequest, response: Response):
+def auth_setup(req: PinRequest, request: Request, response: Response):
     """İlk kurulum: parola belirle ve oturum aç."""
     if auth.pin_is_set():
         raise HTTPException(status_code=400, detail="Parola zaten belirlenmiş")
@@ -175,20 +191,23 @@ def auth_setup(req: PinRequest, response: Response):
     if problem:
         raise HTTPException(status_code=400, detail=problem)
     auth.set_pin(pw)
+    _audit(request, "setup", True)
     _set_session_cookie(response, auth.create_session())
     return {"ok": True}
 
 
 @app.post("/api/auth/login")
 def auth_login(req: PinRequest, request: Request, response: Response):
-    ip = request.client.host if request.client else "?"
+    ip = _client_ip(request)
     wait = auth.is_locked(ip)
     if wait:
+        _audit(request, "lockout", False)
         log.warning("Giriş kilidi devrede: ip=%s kalan=%ss", ip, wait)
         raise HTTPException(status_code=429,
                             detail=f"Çok fazla hatalı deneme. {wait} saniye sonra tekrar deneyin.")
     if not auth.verify_pin(req.pin):
         auth.record_failure(ip)
+        _audit(request, "login_fail", False)
         log.warning("Başarısız giriş denemesi: ip=%s", ip)
         # Genel mesaj — hesabın varlığı/parolanın uzunluğu vb. sızdırılmaz
         raise HTTPException(status_code=401, detail="Parola hatalı")
@@ -198,9 +217,11 @@ def auth_login(req: PinRequest, request: Request, response: Response):
             return {"twofa_required": True}
         if not auth.twofa_check(req.code):
             auth.record_failure(ip)
+            _audit(request, "twofa_fail", False)
             log.warning("Başarısız 2FA denemesi: ip=%s", ip)
             raise HTTPException(status_code=401, detail="Doğrulama kodu hatalı")
     auth.clear_failures(ip)
+    _audit(request, "login_success", True)
     log.info("Başarılı giriş: ip=%s", ip)
     _set_session_cookie(response, auth.create_session())
     return {"ok": True}
@@ -209,8 +230,15 @@ def auth_login(req: PinRequest, request: Request, response: Response):
 @app.post("/api/auth/logout")
 def auth_logout(request: Request, response: Response):
     auth.destroy_session(request.cookies.get(auth.SESSION_COOKIE))
+    _audit(request, "logout", True)
     response.delete_cookie(auth.SESSION_COOKIE)
     return {"ok": True}
+
+
+@app.get("/api/security/log")
+def security_log():
+    """Son giriş/güvenlik olayları (oturum gerektirir; middleware korur)."""
+    return {"entries": database.list_auth_log(150)}
 
 
 # ---- İki adımlı doğrulama yönetimi (oturum gerektirir; middleware korur) ----
@@ -243,20 +271,22 @@ def twofa_setup():
 
 
 @app.post("/api/2fa/enable")
-def twofa_enable(req: CodeRequest):
+def twofa_enable(req: CodeRequest, request: Request):
     """Bekleyen anahtarı doğrular, etkinleştirir ve kurtarma kodlarını döner."""
     codes = auth.twofa_activate(req.code)
     if codes is None:
         raise HTTPException(status_code=400, detail="Kod doğrulanamadı — tekrar deneyin")
+    _audit(request, "2fa_enabled", True)
     return {"ok": True, "recovery_codes": codes}
 
 
 @app.post("/api/2fa/disable")
-def twofa_disable(req: PinRequest):
+def twofa_disable(req: PinRequest, request: Request):
     """2FA'yı kapatır — parola tekrar istenir (oturum çalınsa bile kapatılamasın)."""
     if not auth.verify_pin(req.pin):
         raise HTTPException(status_code=401, detail="Parola hatalı")
     auth.twofa_disable()
+    _audit(request, "2fa_disabled", True)
     return {"ok": True}
 
 

@@ -418,6 +418,23 @@ button.avatar:hover { filter: brightness(1.06); }
 .tf-codes code { font-family: "Fira Code", monospace; font-size: 13px; text-align: center; color: var(--text); }
 .tf-ok { font-size: 15px; font-weight: 700; color: var(--green, #16a34a); }
 
+/* Giriş kayıtları */
+.modal-wide-card { width: min(560px, 96vw); }
+.log-list { display: flex; flex-direction: column; max-height: 56vh; overflow-y: auto; margin: 0 -4px; }
+.log-row {
+  display: grid; grid-template-columns: 12px 1fr auto auto; align-items: center; gap: 12px;
+  padding: 9px 6px; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.log-row:last-child { border-bottom: none; }
+.log-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.log-dot.ok { background: #16a34a; }
+.log-dot.bad { background: var(--red); }
+.log-dot.warn { background: #d97706; }
+.log-dot.muted { background: var(--faint, #94a3b8); }
+.log-ev { font-weight: 600; color: var(--text); }
+.log-ip { font-family: "Fira Code", monospace; font-size: 12px; color: var(--muted); }
+.log-ts { font-size: 12px; color: var(--faint, #94a3b8); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
 /* Global arama paleti (Cmd+K) */
 #gs-overlay {
   position: fixed; inset: 0; z-index: 300;

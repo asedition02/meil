@@ -130,6 +130,16 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS auth_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT DEFAULT (datetime('now')),
+    ip TEXT,
+    user_agent TEXT,
+    event TEXT,           -- login_success | login_fail | twofa_fail | lockout | setup | logout | 2fa_enabled | 2fa_disabled
+    success INTEGER       -- 1 başarılı, 0 başarısız
+);
+CREATE INDEX IF NOT EXISTS idx_auth_log_ts ON auth_log(ts DESC);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_msgid_account
     ON emails(message_id, account_id);
 CREATE INDEX IF NOT EXISTS idx_emails_category ON emails(category);
@@ -301,6 +311,30 @@ def touch_session(token: str, days: int) -> bool:
 def delete_session(token: str):
     with get_db() as db:
         db.execute("DELETE FROM sessions WHERE token = ?", (token,))
+
+
+# ---- Giriş / güvenlik günlüğü ----
+
+def add_auth_log(ip: str, user_agent: str, event: str, success: bool):
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO auth_log (ip, user_agent, event, success) VALUES (?,?,?,?)",
+            (ip, (user_agent or "")[:300], event, 1 if success else 0),
+        )
+        # Günlüğü makul tut: en yeni 2000 kaydı sakla
+        db.execute(
+            """DELETE FROM auth_log WHERE id NOT IN
+               (SELECT id FROM auth_log ORDER BY id DESC LIMIT 2000)"""
+        )
+
+
+def list_auth_log(limit: int = 100) -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT ts, ip, user_agent, event, success FROM auth_log ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 # ---- Hesaplar ----
