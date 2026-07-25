@@ -1253,7 +1253,7 @@ $("#dr-index-btn").onclick = async () => {
   try {
     const r = await api("/api/dataroom/index", { method: "POST", body: JSON.stringify({}) });
     let msg = `${r.extracted} dosyadan metin çıkarıldı, ${r.analyzed} dosya AI ile analiz edildi`;
-    if (!r.ai_enabled) msg += " — AI analizi için ANTHROPIC_API_KEY gerekli";
+    if (!r.ai_enabled) msg += " — AI analizi için API anahtarı gerekli";
     if (r.errors.length) msg += ` (${r.errors.length} hata)`;
     toast(msg, false);
     loadDataroom();
@@ -2570,7 +2570,7 @@ async function bootApp() {
       toast(RESTART_MSG, true);
     }
     if (!status.ai_configured) {
-      toast("ANTHROPIC_API_KEY ayarlanmadı — .env dosyasını düzenleyin", true);
+      toast("Yapay zekâ API anahtarı ayarlanmadı — .env dosyasını düzenleyin", true);
     } else if (!status.accounts) {
       toast("Başlamak için Hesaplar sekmesinden bir mail hesabı ekleyin");
       document.querySelector('[data-view="accounts"]').click();

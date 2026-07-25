@@ -19,9 +19,25 @@ SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
 SMTP_SECURITY = os.environ.get("SMTP_SECURITY", "ssl")
 
-# Claude API
+# --- Yapay zekâ sağlayıcısı ---
+# Google Gemini (varsayılan) veya Anthropic Claude. AI_PROVIDER ile açıkça
+# seçilebilir; boş bırakılırsa hangi anahtar tanımlıysa o kullanılır.
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest").strip() or "gemini-flash-latest"
+
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-8")
+
+AI_PROVIDER = (os.environ.get("AI_PROVIDER", "").strip().lower()
+               or ("gemini" if GEMINI_API_KEY else "claude"))
+
+
+def ai_configured() -> bool:
+    return bool(GEMINI_API_KEY if AI_PROVIDER == "gemini" else ANTHROPIC_API_KEY)
+
+
+def ai_model() -> str:
+    return GEMINI_MODEL if AI_PROVIDER == "gemini" else CLAUDE_MODEL
 
 # Depolama
 DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))

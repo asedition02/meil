@@ -1030,7 +1030,7 @@ def dataroom_index(req: IndexRequest):
     files = dataroom.list_files()
     meta = database.all_file_meta()
     extracted, analyzed, ai_errors = 0, 0, []
-    ai_budget = req.max_ai if config.ANTHROPIC_API_KEY else 0
+    ai_budget = req.max_ai if config.ai_configured() else 0
     for f in files:
         path = f["path"]
         # 1) Metin çıkarma — dosya değişmediyse atla
@@ -1074,7 +1074,7 @@ def dataroom_index(req: IndexRequest):
         "ok": True,
         "extracted": extracted,
         "analyzed": analyzed,
-        "ai_enabled": bool(config.ANTHROPIC_API_KEY),
+        "ai_enabled": config.ai_configured(),
         "errors": ai_errors,
     }
 
@@ -1421,8 +1421,9 @@ def status():
     return {
         "api_version": API_VERSION,
         "accounts": len(accounts),
-        "ai_configured": bool(config.ANTHROPIC_API_KEY),
-        "model": config.CLAUDE_MODEL,
+        "ai_configured": config.ai_configured(),
+        "ai_provider": config.AI_PROVIDER,
+        "model": config.ai_model(),
     }
 
 

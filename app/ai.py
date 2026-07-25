@@ -1,9 +1,22 @@
-"""Claude ile mail tasnifi, özet ve yanıt önerisi."""
+"""Yapay zekâ ile mail tasnifi, özet ve yanıt önerisi.
+
+Sağlayıcı `AI_PROVIDER` ile seçilir: "gemini" (Google Gemini, varsayılan) veya
+"claude" (Anthropic). Tüm çağrılar aşağıdaki iki yardımcıdan geçer, böylece
+sağlayıcı değiştiğinde iş mantığına dokunmak gerekmez:
+
+- _generate_json(system, messages, schema, max_tokens) → şemaya uygun dict
+- _generate_text(system, messages, max_tokens) → düz metin
+"""
 import json
 
-import anthropic
+import requests
 
 from . import config
+
+try:                       # yalnızca Claude kullanılacaksa gerekir
+    import anthropic
+except ImportError:        # pragma: no cover
+    anthropic = None
 
 CATEGORIES = [
     "Önemli",
@@ -88,16 +101,131 @@ kibar bir kapanışla bitir. Uydurma bilgi ekleme; emin olamadığın yerlerde \
 detected_event.exists=true yap ve alanlarını doldur. Tarihi kesin olmayan, geçmişte \
 kalan veya belirsiz ("bir ara görüşelim" gibi) ifadeler için exists=false bırak."""
 
-_client: anthropic.Anthropic | None = None
+# ---------------------------------------------------------------------------
+# Sağlayıcı katmanı
+# ---------------------------------------------------------------------------
+
+_client = None
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+_TIMEOUT = 120
+# Düşünen modellerde düşünme tokenleri de çıktı bütçesinden düşülür — taban pay
+_MIN_OUTPUT_TOKENS = 4096
 
 
-def _get_client() -> anthropic.Anthropic:
+def _get_client():
+    """Anthropic istemcisi (yalnızca claude sağlayıcısında kullanılır)."""
     global _client
     if _client is None:
+        if anthropic is None:
+            raise RuntimeError("anthropic paketi kurulu değil.")
         if not config.ANTHROPIC_API_KEY:
             raise RuntimeError("ANTHROPIC_API_KEY ayarlanmalı.")
         _client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     return _client
+
+
+def _gemini_schema(node):
+    """JSON Schema → Gemini responseSchema.
+
+    Gemini `additionalProperties` desteklemez; ayrıca alan sırasını korumak için
+    `propertyOrdering` ister (yoksa alanlar rastgele sırada üretilebilir).
+    """
+    if isinstance(node, dict):
+        out = {k: _gemini_schema(v) for k, v in node.items() if k != "additionalProperties"}
+        if out.get("type") == "object" and isinstance(out.get("properties"), dict):
+            out["propertyOrdering"] = list(out["properties"].keys())
+        return out
+    if isinstance(node, list):
+        return [_gemini_schema(v) for v in node]
+    return node
+
+
+def _gemini_call(system: str, messages: list[dict], schema: dict | None,
+                 max_tokens: int) -> str:
+    if not config.GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY ayarlanmalı.")
+    contents = [
+        # Gemini'de asistan rolünün adı "model"
+        {"role": "model" if m["role"] == "assistant" else "user",
+         "parts": [{"text": m["content"]}]}
+        for m in messages
+    ]
+    # Gemini 2.5+ modelleri "düşünen" modeller: düşünme tokenleri de
+    # maxOutputTokens bütçesinden harcanır (tipik olarak ~1000-1500). Bütçe dar
+    # kalırsa yanıt JSON'un ortasında kesilir; bu yüzden taban yükseltiliyor.
+    gen: dict = {"maxOutputTokens": max(max_tokens, _MIN_OUTPUT_TOKENS),
+                 "temperature": 0.3}
+    if schema is not None:
+        gen["responseMimeType"] = "application/json"
+        gen["responseSchema"] = _gemini_schema(schema)
+    payload = {"contents": contents, "generationConfig": gen}
+    if system:
+        payload["systemInstruction"] = {"parts": [{"text": system}]}
+
+    resp = requests.post(
+        GEMINI_URL.format(model=config.GEMINI_MODEL),
+        params={"key": config.GEMINI_API_KEY},
+        json=payload, timeout=_TIMEOUT,
+    )
+    if resp.status_code != 200:
+        detail = ""
+        try:
+            detail = resp.json().get("error", {}).get("message", "")
+        except ValueError:
+            detail = resp.text[:200]
+        raise RuntimeError(f"Gemini API hatası ({resp.status_code}): {detail}")
+
+    data = resp.json()
+    candidates = data.get("candidates") or []
+    if not candidates:
+        blocked = (data.get("promptFeedback") or {}).get("blockReason")
+        raise RuntimeError(f"Gemini yanıt üretmedi{f' (engellendi: {blocked})' if blocked else ''}.")
+    cand = candidates[0]
+    text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", []))
+    reason = cand.get("finishReason", "")
+    # MAX_TOKENS'ta kısmi metin de dönebilir; JSON yarıda kesilmiş olur
+    if reason == "MAX_TOKENS":
+        raise RuntimeError(
+            "Gemini yanıtı token sınırına takıldı — GEMINI_MODEL için daha yüksek "
+            "bütçe gerekiyor ya da içerik çok uzun."
+        )
+    if not text.strip():
+        raise RuntimeError(f"Gemini boş yanıt döndü (finishReason={reason}).")
+    return text
+
+
+def _claude_call(system: str, messages: list[dict], schema: dict | None,
+                 max_tokens: int) -> str:
+    kwargs = {
+        "model": config.CLAUDE_MODEL,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": messages,
+    }
+    if schema is not None:
+        kwargs["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
+    response = _get_client().messages.create(**kwargs)
+    return next(b.text for b in response.content if b.type == "text")
+
+
+def _generate_text(system: str, messages: list[dict], max_tokens: int = 2048) -> str:
+    """Seçili sağlayıcıdan düz metin yanıt alır."""
+    if config.AI_PROVIDER == "gemini":
+        return _gemini_call(system, messages, None, max_tokens)
+    return _claude_call(system, messages, None, max_tokens)
+
+
+def _generate_json(system: str, messages: list[dict], schema: dict,
+                   max_tokens: int = 2048) -> dict:
+    """Seçili sağlayıcıdan şemaya uygun JSON alır ve dict olarak döner."""
+    if config.AI_PROVIDER == "gemini":
+        text = _gemini_call(system, messages, schema, max_tokens)
+    else:
+        text = _claude_call(system, messages, schema, max_tokens)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Yapay zekâ geçersiz JSON döndürdü: {e}") from e
 
 
 def _email_prompt(sender: str, subject: str, date: str, body: str, attachments: list[str]) -> str:
@@ -115,25 +243,16 @@ def _email_prompt(sender: str, subject: str, date: str, body: str, attachments: 
 def triage_email(sender: str, subject: str, date: str, body: str,
                  attachments: list[str], user_name: str = "") -> dict:
     """Maili sınıflandırır, özetler ve yanıt taslağı üretir."""
-    client = _get_client()
     system = SYSTEM_PROMPT
     if user_name:
         system += f"\n- Kullanıcının adı: {user_name}. Yanıtları bu isimle imzala."
-    response = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=2048,
-        system=system,
-        output_config={"format": {"type": "json_schema", "schema": TRIAGE_SCHEMA}},
-        messages=[
-            {
-                "role": "user",
-                "content": "Aşağıdaki maili tasnif et:\n\n"
-                + _email_prompt(sender, subject, date, body, attachments),
-            }
-        ],
+    return _generate_json(
+        system,
+        [{"role": "user",
+          "content": "Aşağıdaki maili tasnif et:\n\n"
+                     + _email_prompt(sender, subject, date, body, attachments)}],
+        TRIAGE_SCHEMA, 2048,
     )
-    text = next(b.text for b in response.content if b.type == "text")
-    return json.loads(text)
 
 
 COMPOSE_SCHEMA = {
@@ -153,7 +272,6 @@ COMPOSE_SCHEMA = {
 def compose_email(instruction: str, to: str = "", subject: str = "",
                   user_name: str = "") -> dict:
     """Kullanıcının talimatından yeni bir mail taslağı üretir."""
-    client = _get_client()
     system = (
         "Sen bir e-posta asistanısın. Kullanıcının talimatına göre gönderilmeye hazır "
         "bir mail yazıyorsun.\n"
@@ -169,15 +287,8 @@ def compose_email(instruction: str, to: str = "", subject: str = "",
         prompt += f"Alıcı: {to}\n"
     if subject:
         prompt += f"Konu (kullanıcı belirledi, aynen koru): {subject}\n"
-    response = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=2048,
-        system=system,
-        output_config={"format": {"type": "json_schema", "schema": COMPOSE_SCHEMA}},
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = next(b.text for b in response.content if b.type == "text")
-    result = json.loads(text)
+    result = _generate_json(system, [{"role": "user", "content": prompt}],
+                            COMPOSE_SCHEMA, 2048)
     if subject:
         result["subject"] = subject
     return result
@@ -224,27 +335,18 @@ DOC_SCHEMA = {
 
 def analyze_document(filename: str, text: str) -> dict:
     """Belge metnini sınıflandırır: tür, özet, etiketler, tarih ve fatura alanları."""
-    client = _get_client()
     system = (
         "Sen bir belge asistanısın. Kullanıcının belge arşivindeki (dataroom) dosyaları "
         "analiz ediyorsun: belge türünü belirle, kısa Türkçe özet çıkar, arama için "
         "etiketler öner. Fatura/dekont ise tutar, para birimi, son ödeme tarihi ve "
         "kesen kurumu çıkar. Emin olamadığın alanları boş bırak; asla uydurma."
     )
-    response = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=1024,
-        system=system,
-        output_config={"format": {"type": "json_schema", "schema": DOC_SCHEMA}},
-        messages=[
-            {
-                "role": "user",
-                "content": f"Dosya adı: {filename}\n\n--- BELGE METNİ ---\n{text[:20000]}",
-            }
-        ],
+    return _generate_json(
+        system,
+        [{"role": "user",
+          "content": f"Dosya adı: {filename}\n\n--- BELGE METNİ ---\n{text[:20000]}"}],
+        DOC_SCHEMA, 1024,
     )
-    out = next(b.text for b in response.content if b.type == "text")
-    return json.loads(out)
 
 
 CHAT_SCHEMA = {
@@ -271,7 +373,6 @@ def answer_inbox_question(question: str, emails: list[dict],
                           history: list[dict] | None = None,
                           user_name: str = "", today: str = "") -> dict:
     """Gelen kutusu hakkındaki soruyu, bulunan maillere dayanarak yanıtlar."""
-    client = _get_client()
     system = (
         "Sen kullanıcının e-posta asistanısın. Kullanıcı gelen kutusu hakkında soru "
         "soruyor; sana sorusuyla ilgili bulunabilen mailler veriliyor.\n"
@@ -305,15 +406,7 @@ def answer_inbox_question(question: str, emails: list[dict],
         "role": "user",
         "content": f"--- GELEN KUTUSUNDAN İLGİLİ MAİLLER ---\n{context}\n\n--- SORU ---\n{question}",
     })
-    response = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=1024,
-        system=system,
-        output_config={"format": {"type": "json_schema", "schema": CHAT_SCHEMA}},
-        messages=messages,
-    )
-    text = next(b.text for b in response.content if b.type == "text")
-    return json.loads(text)
+    return _generate_json(system, messages, CHAT_SCHEMA, 1024)
 
 
 THREAD_SCHEMA = {
@@ -338,7 +431,6 @@ THREAD_SCHEMA = {
 
 def summarize_thread(messages: list[dict], user_name: str = "") -> dict:
     """Bir konuşma dizisinin tamamını özetler ve bekleyen aksiyonu çıkarır."""
-    client = _get_client()
     system = (
         "Sen bir e-posta asistanısın. Kullanıcıya bir mail yazışmasının (dizinin) "
         "tamamını özetliyorsun: konunun ne olduğunu, kimin ne söylediğini ve son "
@@ -355,26 +447,17 @@ def summarize_thread(messages: list[dict], user_name: str = "") -> dict:
             f"Tarih: {m.get('date') or ''}\n"
             f"Konu: {m.get('subject') or ''}\n\n{body}"
         )
-    response = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=1024,
-        system=system,
-        output_config={"format": {"type": "json_schema", "schema": THREAD_SCHEMA}},
-        messages=[
-            {
-                "role": "user",
-                "content": "Aşağıdaki mail yazışmasını özetle:\n\n" + "\n\n".join(parts),
-            }
-        ],
+    return _generate_json(
+        system,
+        [{"role": "user",
+          "content": "Aşağıdaki mail yazışmasını özetle:\n\n" + "\n\n".join(parts)}],
+        THREAD_SCHEMA, 1024,
     )
-    text = next(b.text for b in response.content if b.type == "text")
-    return json.loads(text)
 
 
 def regenerate_reply(sender: str, subject: str, date: str, body: str,
                      instruction: str = "", user_name: str = "") -> str:
     """Kullanıcının ek talimatıyla yeni bir yanıt taslağı üretir."""
-    client = _get_client()
     system = SYSTEM_PROMPT
     if user_name:
         system += f"\n- Kullanıcının adı: {user_name}. Yanıtları bu isimle imzala."
@@ -385,10 +468,4 @@ def regenerate_reply(sender: str, subject: str, date: str, body: str,
     if instruction:
         prompt += f"\nKullanıcının talimatı: {instruction}\n"
     prompt += "\n" + _email_prompt(sender, subject, date, body, [])
-    response = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=2048,
-        system=system,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return next(b.text for b in response.content if b.type == "text").strip()
+    return _generate_text(system, [{"role": "user", "content": prompt}], 2048).strip()
