@@ -68,6 +68,10 @@
         <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>
         <span class="rail-label">Dataroom</span>
       </button>
+      <button class="rail-btn" data-view="bulk" title="Toplu Mail">
+        <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="m3 8 6.4 4.3a2 2 0 0 0 2.2 0L18 8"/><path d="M21 9v9a2 2 0 0 1-2 2H8"/></svg></span>
+        <span class="rail-label">Toplu Mail</span>
+      </button>
       <button class="rail-btn" data-view="accounts" title="Hesaplar">
         <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 19c.8-3 3.4-5 6.5-5s5.7 2 6.5 5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16.5 14.2c2.4.4 4.3 2 5 4.8"/></svg></span>
         <span class="rail-label">Hesaplar</span>
@@ -221,6 +225,82 @@
     </main>
 
     <!-- HESAPLAR -->
+    <!-- TOPLU MAIL -->
+    <main id="view-bulk" class="view" style="display:none">
+      <div class="page">
+        <h2 class="page-title">Toplu Mail</h2>
+        <p class="page-desc">Excel/CSV listesindeki adreslere <b>kişiselleştirilmiş</b> mail gönderin. Kendi hesabınızın SMTP sunucusu kullanılır; <code>{sütun}</code> yer tutucularıyla her maile kişiye özel içerik yazılır.</p>
+
+        <!-- 1. Liste -->
+        <div class="card form-card">
+          <h3><span class="step-num">1</span> Alıcı listesi</h3>
+          <div id="bulk-drop" class="bulk-drop">
+            <input type="file" id="bulk-file" accept=".xlsx,.xlsm,.csv" hidden>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+            <b>Excel veya CSV dosyası seçin</b>
+            <span>.xlsx veya .csv — ilk satır sütun başlıkları olmalı, bir sütun e-posta içermeli</span>
+          </div>
+          <div id="bulk-file-info" style="display:none"></div>
+          <div id="bulk-preview"></div>
+        </div>
+
+        <!-- 2. İçerik -->
+        <div class="card form-card" id="bulk-compose" style="display:none">
+          <h3><span class="step-num">2</span> Mail içeriği</h3>
+          <div class="form-grid">
+            <label>Gönderen hesap
+              <select id="bulk-account"></select>
+            </label>
+            <label>E-posta sütunu
+              <select id="bulk-email-col"></select>
+            </label>
+            <label>Görünen ad (isteğe bağlı)
+              <input id="bulk-from-name" placeholder="ör. Meil Ekibi">
+            </label>
+            <label>Mailler arası bekleme
+              <select id="bulk-delay">
+                <option value="500">0,5 saniye (hızlı)</option>
+                <option value="1000" selected>1 saniye (önerilen)</option>
+                <option value="3000">3 saniye (güvenli)</option>
+                <option value="6000">6 saniye (çok güvenli)</option>
+              </select>
+            </label>
+          </div>
+          <label class="bulk-label">Konu
+            <input id="bulk-subject" placeholder="Merhaba {isim}, teklifiniz hazır">
+          </label>
+          <div class="bulk-chips-row">
+            <span class="bulk-chips-label">Yer tutucu ekle:</span>
+            <div id="bulk-chips" class="bulk-chips"></div>
+          </div>
+          <label class="bulk-label">Mesaj
+            <textarea id="bulk-body" rows="9" placeholder="Merhaba {isim},&#10;&#10;..."></textarea>
+          </label>
+          <div class="bulk-opts">
+            <label class="chk-inline"><input type="checkbox" id="bulk-html"> HTML olarak gönder</label>
+            <button class="pill" id="bulk-preview-btn">Önizle</button>
+          </div>
+          <div id="bulk-render-preview" style="display:none"></div>
+        </div>
+
+        <!-- 3. Gönder -->
+        <div class="card form-card" id="bulk-sendcard" style="display:none">
+          <h3><span class="step-num">3</span> Gönder</h3>
+          <p class="hint" id="bulk-summary"></p>
+          <div class="bulk-send-row">
+            <input id="bulk-test-to" placeholder="Deneme adresi (kendi mailiniz)" type="email">
+            <button class="pill" id="bulk-test-btn">Deneme Gönder</button>
+          </div>
+          <button class="pill accent bulk-go" id="bulk-send-btn">Toplu Gönderimi Başlat</button>
+          <div id="bulk-progress" style="display:none">
+            <div class="bulk-bar"><i id="bulk-bar-fill"></i></div>
+            <div class="bulk-stats" id="bulk-stats"></div>
+            <div class="bulk-log" id="bulk-log"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+
     <main id="view-accounts" class="view" style="display:none">
       <div class="page">
         <h2 class="page-title">Mail Hesapları</h2>

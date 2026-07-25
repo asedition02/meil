@@ -7,6 +7,7 @@ Microsoft Teams görünümlü arayüzüyle **birden fazla mail hesabına** (Gmai
 3. **Yanıt önerir** — Yanıt gerektiren mailler için gönderilmeye hazır taslak yazar. Taslağı düzenleyebilir, "Yeniden Öner" ile talimat verebilir ve **sizin onayınızla** gönderirsiniz. Onaysız hiçbir mail gönderilmez.
 4. **Dataroom** — Mail ekleri otomatik saklanır; aynı zamanda tam donanımlı bir sanal veri odası: klasör ağacı ve taşıma, belge önizleme (PDF/görsel), not + etiket + favori, süreli paylaşım linkleri (indirme sayaçlı, iptal edilebilir), belgeyi doğrudan mail atma, toplu ZIP indirme/silme ve tüm işlemlerin kaydedildiği etkinlik günlüğü (audit trail).
 5. **Takvim** — Apple iCloud (CalDAV) ve Google Takvim (gizli iCal adresi) entegrasyonlu ay görünümü. Claude, maillerdeki toplantı/randevu/son tarihleri otomatik tespit eder; tek tıkla yerel takvime veya iCloud takviminize eklersiniz.
+6. **Toplu Mail** — Excel/CSV listesindeki adreslere kişiselleştirilmiş toplu mail (mail merge). `{sütun}` yer tutucularıyla her alıcıya özel konu/içerik, HTML veya düz metin, deneme maili, canlı ilerleme takibi.
 
 ## Kurulum
 
@@ -113,6 +114,7 @@ Gmail (IMAP) ──► Mail çekilir ──► Ekler dataroom'a kaydedilir
 - **"AI'ya Sor"** ile gelen kutunuza soru sorabilirsiniz ("Ayşe'yle fiyat nede kalmıştı?", "bu hafta hangi faturalar geldi?"): ilgili mailler tam metin aramayla bulunur, yanıt yalnızca bu maillere dayanır ve kaynak mailler tıklanabilir bağlantı olarak gösterilir.
 - Dataroom'da **içerik araması** vardır: PDF, Word, Excel, PowerPoint ve metin dosyalarından metin çıkarılır (pypdf + Office XML); arama kutusu dosya adına ek olarak belge içeriğinde de arar ve eşleşen parçayı vurgular. "AI Tara" butonu belgeleri sınıflandırır (fatura, sözleşme, dekont...), özet ve etiket üretir; faturalardan tutar ile son ödeme tarihini çıkarır.
 - Yanıtlar yalnızca sizin onayınızla, sizin hesabınızdan `Re:` konusuyla ve doğru konu dizisi (thread) referansıyla gönderilir.
+- **Toplu mail** sekmesinde `.xlsx`/`.csv` listesi yüklersiniz (ilk satır başlık, bir sütun e-posta). E-posta sütunu otomatik tahmin edilir; konu ve mesajda `{sütun}` yazarak kişiselleştirirsiniz (ör. `Merhaba {isim}`). Göndermeden önce **önizleme** ve **deneme maili** yapabilir, gönderim sırasında satır satır ilerlemeyi (gönderildi / başarısız / atlandı) canlı izlersiniz. Mailler kendi hesabınızın SMTP'sinden, tek bağlantı üzerinden ve aralarında ayarlanabilir bekleme ile gönderilir — sağlayıcı limitlerine takılmamak için. Geçersiz adresler atlanır; HTML seçilirse düz metin alternatifi de eklenir. Not: Gmail gibi sağlayıcıların günlük gönderim limiti vardır (kişisel hesaplarda ~500/gün) ve toplu gönderimde yasal izin/onay sorumluluğu size aittir.
 - Tüm veriler yerel `data/` klasöründe tutulur (SQLite + dosyalar).
 
 ## Güvenlik notları

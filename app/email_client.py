@@ -296,6 +296,62 @@ def send_reply(account: dict, to_address: str, subject: str, body: str,
         smtp.send_message(msg)
 
 
+class BulkSender:
+    """Toplu gönderim için tek SMTP bağlantısını açık tutar.
+
+    Her mail için yeniden bağlanmak hem yavaştır hem de sunucular tarafından
+    hız sınırı/spam olarak değerlendirilebilir. Bağlantı koparsa (sunucu
+    zaman aşımı, oturum düşmesi) bir kez yeniden kurulur.
+    """
+
+    def __init__(self, account: dict):
+        _validate(account)
+        self.account = account
+        self.smtp: smtplib.SMTP | None = None
+
+    def __enter__(self) -> "BulkSender":
+        self.smtp = _smtp_connect(self.account)
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def close(self):
+        if self.smtp is not None:
+            try:
+                self.smtp.quit()
+            except Exception:
+                pass
+            self.smtp = None
+
+    def _build(self, to_address: str, subject: str, body: str,
+               is_html: bool, from_name: str = "") -> EmailMessage:
+        msg = EmailMessage()
+        sender = self.account["email"]
+        msg["From"] = f"{from_name} <{sender}>" if from_name.strip() else sender
+        msg["To"] = to_address
+        msg["Subject"] = subject
+        if is_html:
+            msg.set_content(_html_to_text(body))          # düz metin alternatifi
+            msg.add_alternative(body, subtype="html")
+        else:
+            msg.set_content(body)
+        return msg
+
+    def send(self, to_address: str, subject: str, body: str,
+             is_html: bool = False, from_name: str = ""):
+        msg = self._build(to_address, subject, body, is_html, from_name)
+        if self.smtp is None:
+            self.smtp = _smtp_connect(self.account)
+        try:
+            self.smtp.send_message(msg)
+        except (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, OSError):
+            # Bağlantı düşmüş olabilir — bir kez yeniden kurup tekrar dene
+            self.close()
+            self.smtp = _smtp_connect(self.account)
+            self.smtp.send_message(msg)
+
+
 def send_message(account: dict, to_address: str, subject: str, body: str,
                  attachments: list[tuple[str, bytes]] | None = None,
                  cc: str = ""):

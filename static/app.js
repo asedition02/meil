@@ -156,13 +156,14 @@ document.querySelectorAll(".rail-btn").forEach((btn) => {
     document.querySelectorAll(".rail-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     const view = btn.dataset.view;
-    ["inbox", "calendar", "dataroom", "accounts"].forEach((v) => {
+    ["inbox", "calendar", "dataroom", "bulk", "accounts"].forEach((v) => {
       const elem = $(`#view-${v}`);
       if (!elem) { console.error(`View element not found: #view-${v}`); return; }
       elem.style.display = v === view ? "flex" : "none";
     });
     if (view === "calendar") loadCalendar();
     if (view === "dataroom") loadDataroom();
+    if (view === "bulk") loadBulk();
     if (view === "accounts") loadAccounts();
   };
 });
@@ -1596,6 +1597,245 @@ function openSendModal(file) {
   };
 }
 
+// ---- Toplu mail ----
+
+const bulk = { uploadId: null, columns: [], total: 0, valid: 0, rows: [], sending: false };
+
+async function loadBulk() {
+  const sel = $("#bulk-account");
+  try {
+    const r = await api("/api/accounts");
+    state.accounts = r.accounts;
+  } catch { /* mevcut listeyi kullan */ }
+  const accounts = state.accounts || [];
+  if (!accounts.length) {
+    sel.innerHTML = '<option value="">Önce bir mail hesabı ekleyin</option>';
+    return;
+  }
+  sel.innerHTML = accounts
+    .map((a) => `<option value="${a.id}">${esc(a.display_name || a.email)} — ${esc(a.email)}</option>`)
+    .join("");
+}
+
+// --- dosya yükleme ---
+$("#bulk-drop").onclick = () => $("#bulk-file").click();
+$("#bulk-file").onchange = (e) => { if (e.target.files[0]) uploadBulkFile(e.target.files[0]); };
+["dragover", "dragleave", "drop"].forEach((ev) => {
+  $("#bulk-drop").addEventListener(ev, (e) => {
+    e.preventDefault();
+    $("#bulk-drop").classList.toggle("over", ev === "dragover");
+    if (ev === "drop" && e.dataTransfer.files[0]) uploadBulkFile(e.dataTransfer.files[0]);
+  });
+});
+
+async function uploadBulkFile(file) {
+  const info = $("#bulk-file-info");
+  info.style.display = "";
+  info.innerHTML = '<p class="hint">Okunuyor…</p>';
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const res = await fetch("/api/bulk/upload", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Yüklenemedi");
+    bulk.uploadId = data.upload_id;
+    bulk.columns = data.columns;
+    bulk.total = data.total;
+    bulk.valid = data.valid;
+    bulk.rows = data.preview;
+    info.innerHTML = `<div class="bulk-fileinfo">
+      <span class="bulk-fi-name">📄 ${esc(data.filename)}</span>
+      <span class="bulk-fi-stat"><b>${data.total}</b> satır</span>
+      <span class="bulk-fi-stat ok"><b>${data.valid}</b> geçerli e-posta</span>
+      ${data.total - data.valid > 0 ? `<span class="bulk-fi-stat warn"><b>${data.total - data.valid}</b> atlanacak</span>` : ""}
+      <button class="pill mini" id="bulk-clear">Değiştir</button></div>`;
+    $("#bulk-clear").onclick = resetBulk;
+    renderBulkPreview(data.preview, data.columns);
+    fillBulkColumns(data.columns, data.guessed_email_column);
+    $("#bulk-compose").style.display = "";
+    $("#bulk-sendcard").style.display = "";
+    updateBulkSummary();
+  } catch (e) {
+    info.innerHTML = `<p class="auth-error">${esc(e.message)}</p>`;
+  }
+}
+
+function resetBulk() {
+  bulk.uploadId = null;
+  $("#bulk-file").value = "";
+  $("#bulk-file-info").style.display = "none";
+  $("#bulk-preview").innerHTML = "";
+  $("#bulk-compose").style.display = "none";
+  $("#bulk-sendcard").style.display = "none";
+  $("#bulk-progress").style.display = "none";
+}
+
+function renderBulkPreview(rows, columns) {
+  if (!rows.length) return;
+  $("#bulk-preview").innerHTML = `<div class="bulk-table-wrap"><table class="bulk-table">
+    <thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map((r) => `<tr>${columns.map((c) => `<td>${esc(r[c] || "")}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table></div><p class="hint">İlk ${rows.length} satır gösteriliyor.</p>`;
+}
+
+function fillBulkColumns(columns, guessed) {
+  $("#bulk-email-col").innerHTML = columns
+    .map((c) => `<option value="${esc(c)}"${c === guessed ? " selected" : ""}>${esc(c)}</option>`).join("");
+  $("#bulk-chips").innerHTML = columns
+    .map((c) => `<button class="bulk-chip" data-col="${esc(c)}">{${esc(c)}}</button>`).join("");
+  $("#bulk-chips").querySelectorAll(".bulk-chip").forEach((chip) => {
+    chip.onclick = () => insertPlaceholder(`{${chip.dataset.col}}`);
+  });
+}
+
+function insertPlaceholder(text) {
+  const el = document.activeElement;
+  const target = (el && (el.id === "bulk-subject" || el.id === "bulk-body")) ? el : $("#bulk-body");
+  const start = target.selectionStart ?? target.value.length;
+  const end = target.selectionEnd ?? target.value.length;
+  target.value = target.value.slice(0, start) + text + target.value.slice(end);
+  target.focus();
+  target.setSelectionRange(start + text.length, start + text.length);
+}
+
+$("#bulk-email-col").onchange = async () => {
+  try {
+    const r = await api("/api/bulk/count", { method: "POST", body: JSON.stringify(bulkPayload()) });
+    bulk.valid = r.valid;
+    updateBulkSummary();
+  } catch { /* yoksay */ }
+};
+
+function bulkPayload(extra = {}) {
+  return {
+    upload_id: bulk.uploadId,
+    account_id: parseInt($("#bulk-account").value || "0", 10),
+    email_column: $("#bulk-email-col").value,
+    subject: $("#bulk-subject").value,
+    body: $("#bulk-body").value,
+    is_html: $("#bulk-html").checked,
+    from_name: $("#bulk-from-name").value,
+    delay_ms: parseInt($("#bulk-delay").value, 10),
+    ...extra,
+  };
+}
+
+function updateBulkSummary() {
+  const acc = (state.accounts || []).find((a) => String(a.id) === $("#bulk-account").value);
+  const mins = Math.ceil((bulk.valid * parseInt($("#bulk-delay").value, 10)) / 60000);
+  $("#bulk-summary").innerHTML =
+    `<b>${bulk.valid}</b> alıcıya gönderilecek${acc ? ` — <b>${esc(acc.email)}</b> hesabından` : ""}. ` +
+    `Tahmini süre: ~${mins} dakika.`;
+}
+$("#bulk-delay").onchange = updateBulkSummary;
+$("#bulk-account").onchange = updateBulkSummary;
+
+// --- önizleme ---
+$("#bulk-preview-btn").onclick = () => {
+  const row = bulk.rows[0] || {};
+  const render = (t) => (t || "").replace(/\{\s*([^}]+?)\s*\}/g, (m, k) => (row[k] ?? ""));
+  const box = $("#bulk-render-preview");
+  box.style.display = "";
+  const body = render($("#bulk-body").value);
+  box.innerHTML = `<div class="bulk-prev-mail">
+    <div class="bulk-prev-head">
+      <span class="bulk-prev-to">Kime: ${esc(row[$("#bulk-email-col").value] || "—")}</span>
+      <span class="bulk-prev-sub">${esc(render($("#bulk-subject").value)) || "(konu yok)"}</span>
+    </div>
+    <div class="bulk-prev-body">${$("#bulk-html").checked ? body : esc(body).replace(/\n/g, "<br>")}</div>
+  </div><p class="hint">İlk satırın verisiyle önizleme.</p>`;
+};
+
+// --- deneme maili ---
+$("#bulk-test-btn").onclick = async () => {
+  const to = $("#bulk-test-to").value.trim();
+  if (!to) { toast("Deneme adresi girin", true); return; }
+  const btn = $("#bulk-test-btn");
+  btn.disabled = true; btn.textContent = "Gönderiliyor…";
+  try {
+    await api("/api/bulk/send", { method: "POST", body: JSON.stringify(bulkPayload({ test_to: to })) });
+    toast(`Deneme maili ${to} adresine gönderildi ✓`);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = "Deneme Gönder";
+  }
+};
+
+// --- toplu gönderim (NDJSON akışı) ---
+$("#bulk-send-btn").onclick = async () => {
+  if (bulk.sending) return;
+  if (!$("#bulk-subject").value.trim() || !$("#bulk-body").value.trim()) {
+    toast("Konu ve mesaj gerekli", true); return;
+  }
+  if (!confirm(`${bulk.valid} kişiye mail gönderilecek. Devam edilsin mi?`)) return;
+
+  bulk.sending = true;
+  const btn = $("#bulk-send-btn");
+  btn.disabled = true; btn.textContent = "Gönderiliyor…";
+  $("#bulk-progress").style.display = "";
+  $("#bulk-log").innerHTML = "";
+  $("#bulk-bar-fill").style.width = "0%";
+  let sent = 0, failed = 0, skipped = 0, total = bulk.valid;
+
+  const paint = (done) => {
+    $("#bulk-bar-fill").style.width = total ? `${Math.round((done / total) * 100)}%` : "0%";
+    $("#bulk-stats").innerHTML =
+      `<span class="ok">✓ ${sent} gönderildi</span>` +
+      (failed ? `<span class="bad">✕ ${failed} başarısız</span>` : "") +
+      (skipped ? `<span class="muted">− ${skipped} atlandı</span>` : "");
+  };
+
+  try {
+    const res = await fetch("/api/bulk/send", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bulkPayload()),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Gönderim başlatılamadı");
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let ev; try { ev = JSON.parse(line); } catch { continue; }
+        if (ev.type === "start") { total = ev.total; paint(0); }
+        else if (ev.type === "progress") {
+          if (ev.status === "sent") sent++;
+          else if (ev.status === "failed") failed++;
+          else skipped++;
+          const cls = ev.status === "sent" ? "ok" : ev.status === "failed" ? "bad" : "muted";
+          const icon = ev.status === "sent" ? "✓" : ev.status === "failed" ? "✕" : "−";
+          const log = $("#bulk-log");
+          log.insertAdjacentHTML("beforeend",
+            `<div class="bulk-log-row ${cls}"><span>${icon}</span><span>${esc(ev.email)}</span>` +
+            `${ev.error ? `<em>${esc(ev.error)}</em>` : ""}</div>`);
+          log.scrollTop = log.scrollHeight;
+          paint(sent + failed + skipped);
+        } else if (ev.type === "done") {
+          paint(total);
+          toast(`Tamamlandı — ${ev.sent} gönderildi${ev.failed ? `, ${ev.failed} başarısız` : ""}`);
+        } else if (ev.type === "error") {
+          toast(ev.error, true);
+        }
+      }
+    }
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    bulk.sending = false;
+    btn.disabled = false; btn.textContent = "Toplu Gönderimi Başlat";
+  }
+};
+
 // ---- Hesaplar ----
 
 const PROVIDER_HINTS = {
@@ -2320,7 +2560,7 @@ $("#log-btn").onclick = openSecurityLog;
 
 async function bootApp() {
   try {
-    const EXPECTED_API_VERSION = 14;
+    const EXPECTED_API_VERSION = 15;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);

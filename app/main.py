@@ -3,6 +3,7 @@ import datetime as dt
 import json
 import logging
 import secrets
+import time
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,7 +11,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai, auth, calendar_client, config, database, dataroom, email_client, extract, ms_oauth
+from . import (ai, auth, bulkmail, calendar_client, config, database, dataroom,
+               email_client, extract, ms_oauth)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("meil")
@@ -1268,8 +1270,149 @@ def dataroom_send(req: SendFileRequest):
     return {"ok": True}
 
 
+# ---- Toplu mail (mail merge) ----
+# Yüklenen listeler bellekte tutulur; sunucu yeniden başlarsa yeniden yüklenir.
+_bulk_uploads: dict[str, dict] = {}
+BULK_MAX_UPLOADS = 5          # aynı anda saklanan liste sayısı
+BULK_MIN_DELAY_MS = 200       # sağlayıcı hız sınırlarına takılmamak için alt sınır
+
+
+class BulkSendRequest(BaseModel):
+    upload_id: str
+    account_id: int
+    email_column: str
+    subject: str
+    body: str
+    is_html: bool = False
+    from_name: str = ""
+    delay_ms: int = 1000
+    test_to: str = ""          # doluysa yalnızca bu adrese tek deneme maili gider
+
+
+@app.post("/api/bulk/upload")
+async def bulk_upload(file: UploadFile = File(...)):
+    """Excel/CSV alıcı listesini okur, sütunları ve önizlemeyi döner."""
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Dosya boş")
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Dosya çok büyük (en fazla 10 MB)")
+    try:
+        parsed = bulkmail.parse_table(file.filename or "", content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        log.exception("Toplu mail listesi okunamadı")
+        raise HTTPException(status_code=400, detail=f"Dosya okunamadı: {e}")
+
+    upload_id = secrets.token_urlsafe(12)
+    _bulk_uploads[upload_id] = {"rows": parsed["rows"], "columns": parsed["columns"],
+                                "filename": file.filename or "liste"}
+    # En eski kayıtları at (bellek sınırı)
+    while len(_bulk_uploads) > BULK_MAX_UPLOADS:
+        _bulk_uploads.pop(next(iter(_bulk_uploads)))
+
+    email_col = parsed["guessed_email_column"]
+    return {
+        "upload_id": upload_id,
+        "filename": file.filename,
+        "columns": parsed["columns"],
+        "guessed_email_column": email_col,
+        "total": parsed["total"],
+        "valid": bulkmail.valid_recipients(parsed["rows"], email_col),
+        "preview": parsed["preview"],
+    }
+
+
+@app.post("/api/bulk/count")
+def bulk_count(req: BulkSendRequest):
+    """Seçilen e-posta sütununa göre geçerli alıcı sayısını döner."""
+    data = _bulk_uploads.get(req.upload_id)
+    if not data:
+        raise HTTPException(status_code=400, detail="Liste bulunamadı — dosyayı tekrar yükleyin")
+    valid = bulkmail.valid_recipients(data["rows"], req.email_column)
+    return {"total": len(data["rows"]), "valid": valid,
+            "invalid": len(data["rows"]) - valid}
+
+
+@app.post("/api/bulk/send")
+def bulk_send(req: BulkSendRequest):
+    """Listeye kişiselleştirilmiş mail gönderir; ilerlemeyi NDJSON akışıyla bildirir."""
+    from fastapi.responses import StreamingResponse
+
+    data = _bulk_uploads.get(req.upload_id)
+    if not data:
+        raise HTTPException(status_code=400, detail="Liste bulunamadı — dosyayı tekrar yükleyin")
+    account = database.get_account(req.account_id)
+    if not account:
+        raise HTTPException(status_code=400, detail="Gönderim hesabı bulunamadı")
+    if not req.subject.strip() or not req.body.strip():
+        raise HTTPException(status_code=400, detail="Konu ve mesaj içeriği gerekli")
+    if not req.email_column:
+        raise HTTPException(status_code=400, detail="E-posta sütunu seçilmedi")
+
+    rows = data["rows"]
+    # Deneme maili: ilk satırın verisiyle tek adrese gönder
+    if req.test_to.strip():
+        if not bulkmail.is_email(req.test_to):
+            raise HTTPException(status_code=400, detail="Deneme adresi geçersiz")
+        sample = rows[0] if rows else {}
+        try:
+            with email_client.BulkSender(account) as sender:
+                sender.send(req.test_to.strip(),
+                            bulkmail.render_template(req.subject, sample),
+                            bulkmail.render_template(req.body, sample),
+                            req.is_html, req.from_name)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Deneme maili gönderilemedi: {e}")
+        return {"ok": True, "test": True, "to": req.test_to.strip()}
+
+    delay = max(BULK_MIN_DELAY_MS, int(req.delay_ms or 0)) / 1000.0
+
+    def stream():
+        sent = failed = skipped = 0
+        total = len(rows)
+        yield json.dumps({"type": "start", "total": total}) + "\n"
+        try:
+            with email_client.BulkSender(account) as sender:
+                for i, row in enumerate(rows):
+                    to = str(row.get(req.email_column, "")).strip()
+                    if not bulkmail.is_email(to):
+                        skipped += 1
+                        yield json.dumps({"type": "progress", "index": i, "total": total,
+                                          "email": to or "(boş)", "status": "skipped",
+                                          "error": "Geçersiz e-posta"}) + "\n"
+                        continue
+                    try:
+                        sender.send(to,
+                                    bulkmail.render_template(req.subject, row),
+                                    bulkmail.render_template(req.body, row),
+                                    req.is_html, req.from_name)
+                        sent += 1
+                        yield json.dumps({"type": "progress", "index": i, "total": total,
+                                          "email": to, "status": "sent"}) + "\n"
+                    except Exception as e:
+                        failed += 1
+                        yield json.dumps({"type": "progress", "index": i, "total": total,
+                                          "email": to, "status": "failed",
+                                          "error": str(e)[:200]}) + "\n"
+                    if delay and i < total - 1:
+                        time.sleep(delay)
+        except Exception as e:      # bağlantı/kimlik hatası — akışı hatayla bitir
+            log.exception("Toplu gönderim hatası")
+            yield json.dumps({"type": "error", "error": str(e)[:300]}) + "\n"
+        log.info("Toplu gönderim: hesap=%s gönderilen=%d başarısız=%d atlanan=%d",
+                 account["email"], sent, failed, skipped)
+        yield json.dumps({"type": "done", "total": total, "sent": sent,
+                          "failed": failed, "skipped": skipped}) + "\n"
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson; charset=utf-8",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 14
+API_VERSION = 15
 
 
 @app.get("/api/status")
