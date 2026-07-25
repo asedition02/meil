@@ -2489,6 +2489,105 @@ function renderTwofaOn(st) {
 
 $("#twofa-btn").onclick = openTwofa;
 
+// ---- Yapay zekâ sağlayıcısı ----
+
+const aiOverlay = $("#ai-overlay");
+function closeAi() { aiOverlay.hidden = true; }
+$("#ai-close").onclick = closeAi;
+aiOverlay.addEventListener("click", (e) => { if (e.target === aiOverlay) closeAi(); });
+
+async function refreshAiMenuTag() {
+  try {
+    const r = await api("/api/ai/providers");
+    const tag = $("#ai-state");
+    if (!tag) return;
+    const act = r.providers.find((p) => p.active);
+    tag.textContent = r.selected === "auto"
+      ? (act ? `Oto · ${act.label.split(" ")[0]}` : "Oto")
+      : (act ? act.label.split(" ")[0] : r.selected);
+    tag.classList.toggle("on", !!act);
+  } catch { /* yoksay */ }
+}
+
+async function openAiSettings() {
+  $("#user-menu").hidden = true;
+  aiOverlay.hidden = false;
+  $("#ai-body").innerHTML = '<p class="modal-muted">Yükleniyor…</p>';
+  try {
+    renderAiSettings(await api("/api/ai/providers"));
+  } catch (e) {
+    $("#ai-body").innerHTML = `<p class="auth-error">${esc(e.message)}</p>`;
+  }
+}
+
+function renderAiSettings(r) {
+  const rows = r.providers.map((p) => {
+    const sel = r.selected === p.name;
+    const stats = [];
+    if (p.avg_ms) stats.push(`${(p.avg_ms / 1000).toFixed(1)} sn`);
+    if (p.ok) stats.push(`${p.ok} başarılı`);
+    if (p.fail) stats.push(`${p.fail} hata`);
+    if (p.cooldown) stats.push(`${p.cooldown} sn beklemede`);
+    return `<div class="ai-row${p.configured ? "" : " off"}${sel ? " sel" : ""}" data-p="${p.name}">
+      <label class="ai-pick">
+        <input type="radio" name="aiprov" value="${p.name}" ${sel ? "checked" : ""} ${p.configured ? "" : "disabled"}>
+        <span class="ai-name">${esc(p.label)}${p.active ? '<span class="ai-live">kullanımda</span>' : ""}</span>
+      </label>
+      <div class="ai-meta">
+        <code>${esc(p.model || "—")}</code>
+        ${p.configured ? `<span class="ai-stats">${stats.join(" · ") || "henüz kullanılmadı"}</span>`
+                       : '<span class="ai-stats warn">API anahtarı yok (.env)</span>'}
+        ${p.last_error ? `<span class="ai-err" title="${esc(p.last_error)}">son hata: ${esc(p.last_error.slice(0, 60))}</span>` : ""}
+      </div>
+      <button class="pill mini ai-test" data-t="${p.name}" ${p.configured ? "" : "disabled"}>Test Et</button>
+    </div>`;
+  }).join("");
+
+  $("#ai-body").innerHTML = `
+    <div class="ai-list">
+      <div class="ai-row auto${r.selected === "auto" ? " sel" : ""}">
+        <label class="ai-pick">
+          <input type="radio" name="aiprov" value="auto" ${r.selected === "auto" ? "checked" : ""}>
+          <span class="ai-name">⚡ Otomatik (önerilen)</span>
+        </label>
+        <div class="ai-meta"><span class="ai-stats">En hızlı ve çalışan sağlayıcı seçilir; hata olursa diğerine geçilir</span></div>
+      </div>
+      ${rows}
+    </div>
+    <p class="auth-error" id="ai-err"></p>`;
+
+  $("#ai-body").querySelectorAll('input[name="aiprov"]').forEach((el) => {
+    el.onchange = async () => {
+      try {
+        await api("/api/ai/provider", { method: "POST", body: JSON.stringify({ provider: el.value }) });
+        toast(el.value === "auto" ? "Otomatik seçim açıldı" : "Sağlayıcı değiştirildi ✓");
+        refreshAiMenuTag();
+        renderAiSettings(await api("/api/ai/providers"));
+      } catch (e) { $("#ai-err").textContent = e.message; }
+    };
+  });
+
+  $("#ai-body").querySelectorAll(".ai-test").forEach((btn) => {
+    btn.onclick = async () => {
+      const name = btn.dataset.t;
+      btn.disabled = true; btn.textContent = "Test…";
+      try {
+        const res = await api("/api/ai/test", { method: "POST", body: JSON.stringify({ provider: name }) });
+        if (res.ok) toast(`${name}: çalışıyor ✓ (${(res.ms / 1000).toFixed(1)} sn)`);
+        else toast(`${name}: ${res.error}`, true);
+      } catch (e) {
+        toast(e.message, true);
+      } finally {
+        btn.disabled = false; btn.textContent = "Test Et";
+        renderAiSettings(await api("/api/ai/providers"));
+        refreshAiMenuTag();
+      }
+    };
+  });
+}
+
+$("#ai-btn").onclick = openAiSettings;
+
 // ---- Giriş kayıtları (güvenlik günlüğü) ----
 
 const logOverlay = $("#log-overlay");
@@ -2545,7 +2644,7 @@ $("#log-btn").onclick = openSecurityLog;
   avatar.onclick = (e) => {
     e.stopPropagation();
     menu.hidden = !menu.hidden;
-    if (!menu.hidden) refreshTwofaMenuTag();
+    if (!menu.hidden) { refreshTwofaMenuTag(); refreshAiMenuTag(); }
   };
   menu.onclick = (e) => e.stopPropagation();
   document.addEventListener("click", () => { menu.hidden = true; });

@@ -1030,7 +1030,7 @@ def dataroom_index(req: IndexRequest):
     files = dataroom.list_files()
     meta = database.all_file_meta()
     extracted, analyzed, ai_errors = 0, 0, []
-    ai_budget = req.max_ai if config.ai_configured() else 0
+    ai_budget = req.max_ai if ai.available_providers() else 0
     for f in files:
         path = f["path"]
         # 1) Metin çıkarma — dosya değişmediyse atla
@@ -1074,7 +1074,7 @@ def dataroom_index(req: IndexRequest):
         "ok": True,
         "extracted": extracted,
         "analyzed": analyzed,
-        "ai_enabled": config.ai_configured(),
+        "ai_enabled": bool(ai.available_providers()),
         "errors": ai_errors,
     }
 
@@ -1270,6 +1270,41 @@ def dataroom_send(req: SendFileRequest):
     return {"ok": True}
 
 
+# ---- Yapay zekâ sağlayıcısı ----
+
+class ProviderRequest(BaseModel):
+    provider: str
+
+
+@app.get("/api/ai/providers")
+def ai_providers():
+    return {"selected": ai.selected_provider(),
+            "active": ai.active_provider(),
+            "providers": ai.provider_status()}
+
+
+@app.post("/api/ai/provider")
+def ai_set_provider(req: ProviderRequest):
+    """Kullanıcının sağlayıcı tercihi: 'auto' ya da belirli bir sağlayıcı."""
+    try:
+        ai.set_selected_provider(req.provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if req.provider != "auto" and not ai.provider_configured(req.provider):
+        raise HTTPException(status_code=400,
+                            detail="Bu sağlayıcının API anahtarı .env dosyasında tanımlı değil")
+    return {"ok": True, "selected": ai.selected_provider(), "active": ai.active_provider()}
+
+
+@app.post("/api/ai/test")
+def ai_test_provider(req: ProviderRequest):
+    """Sağlayıcıyı küçük bir istekle sınar; gecikme ve hata bilgisini döner."""
+    try:
+        return ai.test_provider(req.provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ---- Toplu mail (mail merge) ----
 # Yüklenen listeler bellekte tutulur; sunucu yeniden başlarsa yeniden yüklenir.
 _bulk_uploads: dict[str, dict] = {}
@@ -1421,9 +1456,10 @@ def status():
     return {
         "api_version": API_VERSION,
         "accounts": len(accounts),
-        "ai_configured": config.ai_configured(),
-        "ai_provider": config.AI_PROVIDER,
-        "model": config.ai_model(),
+        "ai_configured": bool(ai.available_providers()),
+        "ai_provider": ai.active_provider(),
+        "ai_selected": ai.selected_provider(),
+        "model": ai.provider_model(ai.active_provider()),
     }
 
 

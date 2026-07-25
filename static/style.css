@@ -1342,3 +1342,27 @@ table.dataroom input[type="checkbox"] { width: 15px; height: 15px; accent-color:
 .bulk-log-row.bad > span:first-child { color: var(--red); }
 .bulk-log-row.muted { color: var(--muted); }
 .bulk-log-row em { margin-left: auto; font-style: normal; font-size: 11.5px; color: var(--red); }
+
+/* ---- Yapay zekâ sağlayıcı seçimi ---- */
+.ai-list { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.ai-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center;
+  padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2);
+  transition: border-color .18s, background .18s;
+}
+.ai-row.sel { border-color: var(--accent); background: var(--accent-soft); }
+.ai-row.off { opacity: .55; }
+.ai-row.auto { border-style: dashed; }
+.ai-pick { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.ai-pick input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.ai-name { font-weight: 650; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.ai-live {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: #fff; background: var(--green, #16a34a); border-radius: 999px; padding: 2px 8px;
+}
+.ai-meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding-left: 26px; }
+.ai-meta code { font-family: "Fira Code", monospace; font-size: 11.5px; color: var(--muted); }
+.ai-stats { font-size: 11.5px; color: var(--muted); }
+.ai-stats.warn { color: #d97706; }
+.ai-err { font-size: 11px; color: var(--red); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-row .ai-test { grid-row: 1; grid-column: 2; }

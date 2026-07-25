@@ -8,10 +8,15 @@ sağlayıcı değiştiğinde iş mantığına dokunmak gerekmez:
 - _generate_text(system, messages, max_tokens) → düz metin
 """
 import json
+import logging
+import time
+from collections import deque
 
 import requests
 
-from . import config
+from . import config, database
+
+log = logging.getLogger("meil.ai")
 
 try:                       # yalnızca Claude kullanılacaksa gerekir
     import anthropic
@@ -194,6 +199,67 @@ def _gemini_call(system: str, messages: list[dict], schema: dict | None,
     return text
 
 
+def _nvidia_call(system: str, messages: list[dict], schema: dict | None,
+                 max_tokens: int) -> str:
+    """NVIDIA NIM (OpenAI uyumlu sohbet API'si).
+
+    Şema desteği modelden modele değiştiği için JSON, hem `response_format` ile
+    hem de şemayı sistem istemine gömerek istenir; yanıt savunmacı ayrıştırılır.
+    """
+    if not config.NVIDIA_API_KEY:
+        raise RuntimeError("NVIDIA_API_KEY ayarlanmalı.")
+    sys_text = system
+    if schema is not None:
+        sys_text += (
+            "\n\nYANIT BİÇİMİ: Yalnızca aşağıdaki JSON şemasına uyan tek bir JSON "
+            "nesnesi döndür. Açıklama, markdown veya kod bloğu ekleme.\n"
+            + json.dumps(schema, ensure_ascii=False)
+        )
+    payload = {
+        "model": config.NVIDIA_MODEL,
+        "messages": [{"role": "system", "content": sys_text}] + messages,
+        "max_tokens": max_tokens,
+        "temperature": 0.3,
+    }
+    if schema is not None:
+        payload["response_format"] = {"type": "json_object"}
+
+    url = config.NVIDIA_BASE_URL.rstrip("/") + "/chat/completions"
+    headers = {"Authorization": f"Bearer {config.NVIDIA_API_KEY}",
+               "Content-Type": "application/json"}
+    resp = requests.post(url, json=payload, headers=headers, timeout=_TIMEOUT)
+    if resp.status_code == 400 and schema is not None:
+        # Model response_format'ı desteklemiyor olabilir — istem yönergesiyle tekrar dene
+        payload.pop("response_format", None)
+        resp = requests.post(url, json=payload, headers=headers, timeout=_TIMEOUT)
+    if resp.status_code != 200:
+        detail = ""
+        try:
+            body = resp.json()
+            detail = (body.get("detail") or body.get("error")
+                      or body.get("message") or json.dumps(body))
+            if isinstance(detail, dict):
+                detail = detail.get("message") or json.dumps(detail)
+        except ValueError:
+            detail = resp.text[:200]
+        raise RuntimeError(f"NVIDIA API hatası ({resp.status_code}): {str(detail)[:300]}")
+
+    data = resp.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError("NVIDIA boş yanıt döndü.")
+    msg = choices[0].get("message") or {}
+    text = (msg.get("content") or "").strip()
+    if not text:
+        # Bazı akıl yürüten modeller içeriği reasoning_content alanına koyar
+        text = (msg.get("reasoning_content") or "").strip()
+    if not text:
+        raise RuntimeError(
+            f"NVIDIA boş içerik döndü (finish_reason={choices[0].get('finish_reason')})."
+        )
+    return text
+
+
 def _claude_call(system: str, messages: list[dict], schema: dict | None,
                  max_tokens: int) -> str:
     kwargs = {
@@ -208,24 +274,198 @@ def _claude_call(system: str, messages: list[dict], schema: dict | None,
     return next(b.text for b in response.content if b.type == "text")
 
 
+# ---------------------------------------------------------------------------
+# Yönlendirici: sağlayıcı seçimi, sağlık takibi ve yedekleme
+# ---------------------------------------------------------------------------
+
+PROVIDERS = ("gemini", "nvidia", "claude")
+PROVIDER_LABELS = {"gemini": "Google Gemini", "nvidia": "NVIDIA NIM", "claude": "Anthropic Claude"}
+_CALLERS = {"gemini": _gemini_call, "nvidia": _nvidia_call, "claude": _claude_call}
+
+_COOLDOWN_SECONDS = 180      # hata veren sağlayıcı bu süre boyunca geri planda
+_SETTING_KEY = "ai_provider"
+
+# Sağlayıcı sağlık istatistikleri (bellekte; süreç yeniden başlayınca sıfırlanır)
+_stats: dict[str, dict] = {
+    p: {"ok": 0, "fail": 0, "latencies": deque(maxlen=20),
+        "last_error": "", "cooldown_until": 0.0}
+    for p in PROVIDERS
+}
+
+
+def provider_configured(name: str) -> bool:
+    return bool(config.API_KEYS.get(name))
+
+
+def provider_model(name: str) -> str:
+    return config.MODELS.get(name, "")
+
+
+def available_providers() -> list[str]:
+    return [p for p in PROVIDERS if provider_configured(p)]
+
+
+def selected_provider() -> str:
+    """Kullanıcının seçimi: veritabanı > .env > 'auto'."""
+    stored = database.get_setting(_SETTING_KEY)
+    choice = (stored or config.AI_PROVIDER or "auto").strip().lower()
+    return choice if choice in PROVIDERS or choice == "auto" else "auto"
+
+
+def set_selected_provider(name: str) -> None:
+    name = (name or "").strip().lower()
+    if name not in PROVIDERS and name != "auto":
+        raise ValueError("Geçersiz sağlayıcı")
+    database.set_setting(_SETTING_KEY, name)
+
+
+def _avg_latency(name: str) -> float:
+    lat = _stats[name]["latencies"]
+    return sum(lat) / len(lat) if lat else 0.0
+
+
+def _score(name: str) -> tuple:
+    """Küçük skor daha iyi: önce soğuma durumu, sonra ölçülen gecikme."""
+    st = _stats[name]
+    in_cooldown = 1 if st["cooldown_until"] > time.time() else 0
+    # Hiç denenmemiş sağlayıcı ortada bir gecikmeyle başlar ki şansı olsun
+    latency = _avg_latency(name) or 3.0
+    return (in_cooldown, latency)
+
+
+def _order_for_auto() -> list[str]:
+    return sorted(available_providers(), key=_score)
+
+
+def active_provider() -> str:
+    """Şu anda kullanılacak sağlayıcı (auto ise en iyi durumdaki)."""
+    choice = selected_provider()
+    if choice != "auto":
+        return choice
+    order = _order_for_auto()
+    return order[0] if order else ""
+
+
+def provider_status() -> list[dict]:
+    """Arayüz için sağlayıcı listesi ve sağlık bilgisi."""
+    now = time.time()
+    active = active_provider()
+    out = []
+    for p in PROVIDERS:
+        st = _stats[p]
+        out.append({
+            "name": p,
+            "label": PROVIDER_LABELS[p],
+            "model": provider_model(p),
+            "configured": provider_configured(p),
+            "active": p == active,
+            "ok": st["ok"],
+            "fail": st["fail"],
+            "avg_ms": round(_avg_latency(p) * 1000) if st["latencies"] else None,
+            "cooldown": max(0, round(st["cooldown_until"] - now)),
+            "last_error": st["last_error"][:200],
+        })
+    return out
+
+
+def _record(name: str, elapsed: float, error: str = "") -> None:
+    st = _stats[name]
+    if error:
+        st["fail"] += 1
+        st["last_error"] = error
+        st["cooldown_until"] = time.time() + _COOLDOWN_SECONDS
+    else:
+        st["ok"] += 1
+        st["last_error"] = ""
+        st["cooldown_until"] = 0.0
+        st["latencies"].append(elapsed)
+
+
+def _call_chain() -> list[str]:
+    """Denenecek sağlayıcılar: seçilen önce, sonra yedekler."""
+    avail = available_providers()
+    if not avail:
+        raise RuntimeError(
+            "Yapay zekâ sağlayıcısı ayarlanmadı — .env dosyasına GEMINI_API_KEY, "
+            "NVIDIA_API_KEY veya ANTHROPIC_API_KEY ekleyin."
+        )
+    choice = selected_provider()
+    if choice == "auto":
+        return _order_for_auto()
+    if choice in avail:
+        # Kullanıcı belirli bir sağlayıcı seçtiyse önce onu dene, sonra diğerleri
+        return [choice] + [p for p in _order_for_auto() if p != choice]
+    return _order_for_auto()
+
+
+def _dispatch(system: str, messages: list[dict], schema: dict | None,
+              max_tokens: int) -> str:
+    """Sağlayıcı zincirini sırayla dener; biri başarılı olana kadar devam eder."""
+    errors = []
+    for name in _call_chain():
+        started = time.time()
+        try:
+            text = _CALLERS[name](system, messages, schema, max_tokens)
+            _record(name, time.time() - started)
+            return text
+        except Exception as e:                       # noqa: BLE001 — yedeğe geç
+            _record(name, time.time() - started, str(e))
+            errors.append(f"{PROVIDER_LABELS[name]}: {e}")
+            log.warning("AI sağlayıcı başarısız (%s): %s", name, e)
+    raise RuntimeError("Tüm yapay zekâ sağlayıcıları başarısız oldu — " + " | ".join(errors))
+
+
+def _extract_json(text: str) -> dict:
+    """Yanıttan JSON çıkarır: kod bloğu çitleri ve çevre metni tolere eder."""
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```", 2)[1] if raw.count("```") >= 2 else raw.strip("`")
+        raw = raw.split("\n", 1)[1] if raw.lower().startswith(("json\n", "json\r")) else raw
+        raw = raw.strip().rstrip("`").strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        start, end = raw.find("{"), raw.rfind("}")
+        if start != -1 and end > start:
+            return json.loads(raw[start:end + 1])
+        raise
+
+
 def _generate_text(system: str, messages: list[dict], max_tokens: int = 2048) -> str:
-    """Seçili sağlayıcıdan düz metin yanıt alır."""
-    if config.AI_PROVIDER == "gemini":
-        return _gemini_call(system, messages, None, max_tokens)
-    return _claude_call(system, messages, None, max_tokens)
+    """Etkin sağlayıcıdan düz metin yanıt alır (gerekirse yedeğe geçer)."""
+    return _dispatch(system, messages, None, max_tokens)
 
 
 def _generate_json(system: str, messages: list[dict], schema: dict,
                    max_tokens: int = 2048) -> dict:
-    """Seçili sağlayıcıdan şemaya uygun JSON alır ve dict olarak döner."""
-    if config.AI_PROVIDER == "gemini":
-        text = _gemini_call(system, messages, schema, max_tokens)
-    else:
-        text = _claude_call(system, messages, schema, max_tokens)
+    """Etkin sağlayıcıdan şemaya uygun JSON alır ve dict olarak döner."""
+    text = _dispatch(system, messages, schema, max_tokens)
     try:
-        return json.loads(text)
+        return _extract_json(text)
     except json.JSONDecodeError as e:
         raise RuntimeError(f"Yapay zekâ geçersiz JSON döndürdü: {e}") from e
+
+
+def test_provider(name: str) -> dict:
+    """Tek bir sağlayıcıyı küçük bir istekle sınar (arayüzdeki 'Test Et')."""
+    if name not in PROVIDERS:
+        raise ValueError("Geçersiz sağlayıcı")
+    if not provider_configured(name):
+        return {"ok": False, "error": "API anahtarı ayarlanmadı"}
+    started = time.time()
+    try:
+        text = _CALLERS[name](
+            "Sen bir test asistanısın. Tek kelimeyle yanıt ver.",
+            [{"role": "user", "content": "Çalışıyor musun? Yalnızca 'evet' yaz."}],
+            None, 64,
+        )
+        elapsed = time.time() - started
+        _record(name, elapsed)
+        return {"ok": True, "ms": round(elapsed * 1000),
+                "model": provider_model(name), "reply": text.strip()[:80]}
+    except Exception as e:                            # noqa: BLE001
+        _record(name, time.time() - started, str(e))
+        return {"ok": False, "error": str(e)[:300], "model": provider_model(name)}
 
 
 def _email_prompt(sender: str, subject: str, date: str, body: str, attachments: list[str]) -> str:

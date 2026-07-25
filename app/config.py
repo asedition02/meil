@@ -25,19 +25,21 @@ SMTP_SECURITY = os.environ.get("SMTP_SECURITY", "ssl")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest").strip() or "gemini-flash-latest"
 
+NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "").strip()
+NVIDIA_MODEL = (os.environ.get("NVIDIA_MODEL", "").strip()
+                or "meta/llama-3.3-70b-instruct")
+NVIDIA_BASE_URL = (os.environ.get("NVIDIA_BASE_URL", "").strip()
+                   or "https://integrate.api.nvidia.com/v1")
+
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-8")
 
-AI_PROVIDER = (os.environ.get("AI_PROVIDER", "").strip().lower()
-               or ("gemini" if GEMINI_API_KEY else "claude"))
+# Varsayılan seçim: .env'de AI_PROVIDER varsa o, yoksa "auto" (sistem karar verir).
+# Kullanıcı arayüzden değiştirirse tercih veritabanına yazılır ve bu değeri ezer.
+AI_PROVIDER = (os.environ.get("AI_PROVIDER", "").strip().lower() or "auto")
 
-
-def ai_configured() -> bool:
-    return bool(GEMINI_API_KEY if AI_PROVIDER == "gemini" else ANTHROPIC_API_KEY)
-
-
-def ai_model() -> str:
-    return GEMINI_MODEL if AI_PROVIDER == "gemini" else CLAUDE_MODEL
+API_KEYS = {"gemini": GEMINI_API_KEY, "nvidia": NVIDIA_API_KEY, "claude": ANTHROPIC_API_KEY}
+MODELS = {"gemini": GEMINI_MODEL, "nvidia": NVIDIA_MODEL, "claude": CLAUDE_MODEL}
 
 # Depolama
 DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))

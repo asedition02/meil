@@ -40,6 +40,11 @@
             İki Adımlı Doğrulama
             <span id="twofa-state" class="menu-tag">Kapalı</span>
           </button>
+          <button id="ai-btn" class="user-menu-item">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3.5"/></svg>
+            Yapay Zekâ Modeli
+            <span id="ai-state" class="menu-tag">—</span>
+          </button>
           <button id="log-btn" class="user-menu-item">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
             Giriş Kayıtları
@@ -380,6 +385,15 @@
       <button class="modal-close" id="twofa-close" aria-label="Kapat">×</button>
       <h3 class="modal-title">İki Adımlı Doğrulama</h3>
       <div id="twofa-body"></div>
+    </div>
+  </div>
+
+  <div id="ai-overlay" class="modal-overlay" hidden>
+    <div class="modal-card modal-wide-card">
+      <button class="modal-close" id="ai-close" aria-label="Kapat">×</button>
+      <h3 class="modal-title">Yapay Zekâ Modeli</h3>
+      <p class="modal-muted">Tasnif, özet, yanıt önerisi ve belge analizi için kullanılacak sağlayıcı. <b>Otomatik</b> seçilirse Meil en hızlı ve sorunsuz çalışanı kendisi kullanır; biri hata verirse diğerine geçer.</p>
+      <div id="ai-body"></div>
     </div>
   </div>
 

@@ -41,9 +41,12 @@ Tarayıcıda **http://localhost:8000** adresini açın:
 
 | Değişken | Açıklama |
 |---|---|
-| `GEMINI_API_KEY` | Google Gemini API anahtarı — [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (zorunlu) |
-| `GEMINI_MODEL` | Varsayılan `gemini-flash-latest`. Daha hızlı/ucuz için `gemini-flash-lite-latest`, daha güçlü için `gemini-pro-latest` |
-| `AI_PROVIDER` | `gemini` (varsayılan) veya `claude`. Claude için ayrıca `ANTHROPIC_API_KEY` gerekir |
+| `GEMINI_API_KEY` | Google Gemini anahtarı — [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| `GEMINI_MODEL` | Varsayılan `gemini-flash-latest`; daha hızlı/ucuz: `gemini-flash-lite-latest` |
+| `NVIDIA_API_KEY` | NVIDIA NIM anahtarı — [build.nvidia.com](https://build.nvidia.com) |
+| `NVIDIA_MODEL` | Varsayılan `meta/llama-3.3-70b-instruct` |
+| `ANTHROPIC_API_KEY` | Anthropic Claude anahtarı (isteğe bağlı) |
+| `AI_PROVIDER` | `auto` (varsayılan), `gemini`, `nvidia` veya `claude`. En az bir anahtar zorunlu |
 | `USER_NAME` | Yanıt taslaklarında imza olarak kullanılacak adınız |
 | `SYNC_LIMIT` | Her eşitlemede hesap başına işlenecek en fazla mail sayısı (varsayılan 25) |
 | `EMAIL_ADDRESS` vb. | İsteğe bağlı — ilk hesabı arayüz yerine buradan tanımlamak isterseniz |
@@ -127,4 +130,4 @@ Gmail (IMAP) ──► Mail çekilir ──► Ekler dataroom'a kaydedilir
 - Şifreleme anahtarı öncelikle `MEIL_SECRET_KEY` ortam değişkeninden okunur; tanımlı değilse `data/secret.key` otomatik üretilir. Anahtarı `.env`'e taşımanız önerilir — böylece `meil.db` dosyası tek başına sızsa bile şifreler çözülemez. **Anahtarı kaybederseniz** kayıtlı şifreler geri getirilemez; hesapları arayüzden yeniden eklemeniz gerekir.
 - `.env` dosyası `.gitignore`'dadır — şifrelerinizi asla commit etmeyin.
 - Uygulama şifresini istediğiniz an Google hesabınızdan iptal edebilirsiniz.
-- Mail içerikleri tasnif için yapay zekâ sağlayıcısına (varsayılan: Google Gemini) gönderilir. Sağlayıcıyı `AI_PROVIDER` ile değiştirebilirsiniz.
+- Mail içerikleri tasnif için seçili yapay zekâ sağlayıcısına gönderilir. **Birden fazla sağlayıcı** (Gemini, NVIDIA NIM, Claude) tanımlayabilirsiniz: **Otomatik** modda Meil ölçtüğü gecikmeye göre en hızlısını kullanır, biri hata verirse diğerine geçer ve hatalı olanı bir süre devre dışı bırakır. Sağ üst menü → **Yapay Zekâ Modeli** ekranından sağlayıcıyı elle seçebilir, her birini "Test Et" ile sınayabilirsiniz.
