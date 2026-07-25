@@ -1067,6 +1067,51 @@ def view_counts(account_id: int | None = None) -> dict:
     return counts
 
 
+def attention_emails(limit: int = 15) -> list[dict]:
+    """Donna için: yanıt bekleyen / yüksek öncelikli, arşivlenmemiş mailler."""
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT id, sender_name, sender_email, subject, date, category, priority,
+                      summary, needs_reply, is_read, starred, status, event_json
+               FROM emails
+               WHERE status != 'archived'
+                 AND (snooze_until IS NULL OR snooze_until <= datetime('now'))
+                 AND (needs_reply = 1 OR priority = 'yüksek' OR is_read = 0)
+               ORDER BY CASE priority WHEN 'yüksek' THEN 0 WHEN 'orta' THEN 1 ELSE 2 END,
+                        needs_reply DESC, date DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def upcoming_invoices(limit: int = 10) -> list[dict]:
+    """Donna için: dataroom'da AI'nın fatura olarak işaretlediği, tarihli belgeler."""
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT path, doc_type, doc_date, doc_amount, ai_summary
+               FROM dataroom_meta
+               WHERE doc_type IN ('Fatura', 'Dekont/Makbuz')
+                 AND doc_date IS NOT NULL AND doc_date != ''
+               ORDER BY doc_date DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def recent_documents(limit: int = 8) -> list[dict]:
+    """Donna için: dataroom'a en son eklenen/analiz edilen belgeler."""
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT path, doc_type, doc_date, doc_amount, ai_summary, tags
+               FROM dataroom_meta
+               WHERE doc_type IS NOT NULL AND doc_type != ''
+               ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def get_email(email_id: int) -> dict | None:
     with get_db() as db:
         row = db.execute(

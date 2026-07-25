@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import (ai, auth, bulkmail, calendar_client, config, database, dataroom,
-               email_client, extract, ms_oauth)
+               donna, email_client, extract, ms_oauth)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("meil")
@@ -1268,6 +1268,41 @@ def dataroom_send(req: SendFileRequest):
         raise HTTPException(status_code=502, detail=f"Gönderim başarısız: {e}")
     database.log_activity("send", req.path, detail=req.to.strip())
     return {"ok": True}
+
+
+# ---- Donna (asistan) ----
+
+class DonnaAskRequest(BaseModel):
+    question: str
+    history: list[dict] = []
+
+
+@app.get("/api/donna/brief")
+def donna_brief():
+    """Proaktif brifing: acil mailler, bugünün etkinlikleri, yaklaşan ödemeler."""
+    if not ai.available_providers():
+        raise HTTPException(status_code=400,
+                            detail="Yapay zekâ sağlayıcısı ayarlanmadı — .env dosyasını düzenleyin")
+    try:
+        return donna.brief(config.USER_NAME)
+    except Exception as e:
+        log.exception("Donna brifing hatası")
+        raise HTTPException(status_code=502, detail=str(e)[:300])
+
+
+@app.post("/api/donna/ask")
+def donna_ask(req: DonnaAskRequest):
+    """Donna'ya soru sor — mailler, takvim ve dataroom verilerine dayanır."""
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="Soru boş olamaz")
+    if not ai.available_providers():
+        raise HTTPException(status_code=400,
+                            detail="Yapay zekâ sağlayıcısı ayarlanmadı — .env dosyasını düzenleyin")
+    try:
+        return donna.ask(req.question.strip(), req.history, config.USER_NAME)
+    except Exception as e:
+        log.exception("Donna yanıt hatası")
+        raise HTTPException(status_code=502, detail=str(e)[:300])
 
 
 # ---- Yapay zekâ sağlayıcısı ----

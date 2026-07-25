@@ -2489,6 +2489,151 @@ function renderTwofaOn(st) {
 
 $("#twofa-btn").onclick = openTwofa;
 
+// ---- Donna (asistan paneli) ----
+
+const donna = { open: false, loading: false, history: [], briefed: false };
+
+function donnaOpen() {
+  donna.open = true;
+  $("#donna-panel").classList.add("open");
+  $("#donna-panel").setAttribute("aria-hidden", "false");
+  $("#donna-scrim").hidden = false;
+  $("#donna-dot").hidden = true;
+  if (!donna.briefed) loadDonnaBrief();
+  setTimeout(() => $("#donna-input").focus(), 260);
+}
+
+function donnaClose() {
+  donna.open = false;
+  $("#donna-panel").classList.remove("open");
+  $("#donna-panel").setAttribute("aria-hidden", "true");
+  $("#donna-scrim").hidden = true;
+}
+
+$("#donna-btn").onclick = () => (donna.open ? donnaClose() : donnaOpen());
+$("#donna-close").onclick = donnaClose;
+$("#donna-scrim").onclick = donnaClose;
+$("#donna-refresh").onclick = () => { donna.briefed = false; loadDonnaBrief(); };
+
+const URGENCY = { acil: "u-high", normal: "u-mid", bilgi: "u-low" };
+const KIND_ICON = { mail: "✉️", etkinlik: "📅", fatura: "🧾", hatirlatma: "🔔" };
+
+function donnaAppend(html) {
+  const body = $("#donna-body");
+  body.insertAdjacentHTML("beforeend", html);
+  body.scrollTop = body.scrollHeight;
+}
+
+async function loadDonnaBrief() {
+  const body = $("#donna-body");
+  body.innerHTML = `<div class="donna-loading"><span></span><span></span><span></span> Donna verilerine bakıyor…</div>`;
+  try {
+    const r = await api("/api/donna/brief");
+    donna.briefed = true;
+    const st = r.stats || {};
+    const items = (r.items || []).map((it) => `
+      <button class="donna-item ${URGENCY[it.urgency] || "u-mid"}" ${it.email_id ? `data-mail="${it.email_id}"` : ""}>
+        <span class="di-ico">${KIND_ICON[it.kind] || "•"}</span>
+        <span class="di-main">
+          <b>${esc(it.title)}</b>
+          <span>${esc(it.detail)}</span>
+        </span>
+        ${it.email_id ? '<span class="di-go">→</span>' : ""}
+      </button>`).join("");
+    body.innerHTML = `
+      <div class="donna-brief">
+        <div class="donna-greet">${esc(r.greeting || "Merhaba")}</div>
+        <div class="donna-headline">${esc(r.headline || "")}</div>
+        <div class="donna-stats">
+          <span><b>${st.needs_reply ?? 0}</b> yanıt bekliyor</span>
+          <span><b>${st.today_events ?? 0}</b> bugün etkinlik</span>
+          <span><b>${st.events_14d ?? 0}</b> 14 günde</span>
+        </div>
+        ${items ? `<div class="donna-items">${items}</div>`
+                : '<p class="donna-calm">Şu an acil bir şey yok. Sakin bir gün. ☕</p>'}
+      </div>`;
+    body.querySelectorAll(".donna-item[data-mail]").forEach((el) => {
+      el.onclick = () => openMailFromDonna(parseInt(el.dataset.mail, 10));
+    });
+    setDonnaChips(["Bugün neler var?", "Acil yanıtlamam gerekenler?", "Bu hafta hangi ödemeler var?"]);
+  } catch (e) {
+    body.innerHTML = `<p class="auth-error donna-err">${esc(e.message)}</p>`;
+  }
+}
+
+function setDonnaChips(list) {
+  $("#donna-chips").innerHTML = (list || [])
+    .map((q) => `<button class="donna-chip">${esc(q)}</button>`).join("");
+  $("#donna-chips").querySelectorAll(".donna-chip").forEach((c) => {
+    c.onclick = () => { $("#donna-input").value = c.textContent; askDonna(); };
+  });
+}
+
+async function openMailFromDonna(id) {
+  donnaClose();
+  document.querySelector('.rail-btn[data-view="inbox"]').click();
+  try {
+    await selectEmail(id);
+  } catch { toast("Mail açılamadı", true); }
+}
+
+async function askDonna() {
+  const input = $("#donna-input");
+  const q = input.value.trim();
+  if (!q || donna.loading) return;
+  input.value = "";
+  donna.loading = true;
+  $("#donna-send").disabled = true;
+  setDonnaChips([]);
+
+  donnaAppend(`<div class="donna-msg me">${esc(q)}</div>`);
+  const thinkingId = `dt${Date.now()}`;
+  donnaAppend(`<div class="donna-msg her thinking" id="${thinkingId}"><span></span><span></span><span></span></div>`);
+
+  try {
+    const r = await api("/api/donna/ask", {
+      method: "POST",
+      body: JSON.stringify({ question: q, history: donna.history.slice(-6) }),
+    });
+    donna.history.push({ role: "user", content: q });
+    donna.history.push({ role: "assistant", content: r.answer || "" });
+    const srcs = (r.sources || []).map((s) =>
+      `<button class="donna-src" data-mail="${s.id}">✉️ ${esc(s.sender)} · ${esc(s.subject)}</button>`).join("");
+    const el = document.getElementById(thinkingId);
+    el.classList.remove("thinking");
+    el.innerHTML = esc(r.answer || "—").replace(/\n/g, "<br>") +
+      (srcs ? `<div class="donna-srcs">${srcs}</div>` : "");
+    el.querySelectorAll(".donna-src").forEach((b) => {
+      b.onclick = () => openMailFromDonna(parseInt(b.dataset.mail, 10));
+    });
+    setDonnaChips(r.follow_ups || []);
+    $("#donna-body").scrollTop = $("#donna-body").scrollHeight;
+  } catch (e) {
+    const el = document.getElementById(thinkingId);
+    el.classList.remove("thinking");
+    el.classList.add("err");
+    el.textContent = e.message;
+  } finally {
+    donna.loading = false;
+    $("#donna-send").disabled = false;
+    input.focus();
+  }
+}
+
+$("#donna-send").onclick = askDonna;
+$("#donna-input").onkeydown = (e) => { if (e.key === "Enter") askDonna(); };
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && donna.open) donnaClose();
+  // "d" ile aç/kapat — yazı yazarken devreye girmesin
+  if (e.key === "d" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    const t = e.target.tagName;
+    if (t !== "INPUT" && t !== "TEXTAREA" && !e.target.isContentEditable) {
+      e.preventDefault();
+      donna.open ? donnaClose() : donnaOpen();
+    }
+  }
+});
+
 // ---- Yapay zekâ sağlayıcısı ----
 
 const aiOverlay = $("#ai-overlay");

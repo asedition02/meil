@@ -27,6 +27,11 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>
         <span>Eşitle</span>
       </button>
+      <button id="donna-btn" class="donna-btn" title="Donna — asistanın (D)">
+        <span class="donna-ava">D</span>
+        <span class="donna-btn-label">Donna</span>
+        <span class="donna-dot" id="donna-dot" hidden></span>
+      </button>
       <button id="theme-toggle" class="icon-btn" title="Tema değiştir"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>
       <div class="user-wrap">
         <button class="avatar small" id="me-avatar" title="Hesap ve çıkış">M</button>
@@ -387,6 +392,38 @@
       <div id="twofa-body"></div>
     </div>
   </div>
+
+  <!-- Donna — sağdan açılan asistan paneli -->
+  <div id="donna-scrim" class="donna-scrim" hidden></div>
+  <aside id="donna-panel" class="donna-panel" aria-hidden="true">
+    <header class="donna-head">
+      <div class="donna-id">
+        <span class="donna-ava lg">D</span>
+        <div>
+          <b>Donna</b>
+          <span id="donna-sub">Asistanın</span>
+        </div>
+      </div>
+      <div class="donna-head-actions">
+        <button id="donna-refresh" class="icon-btn" title="Brifingi yenile">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>
+        </button>
+        <button id="donna-close" class="icon-btn" title="Kapat (Esc)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </header>
+    <div id="donna-body" class="donna-body"></div>
+    <div class="donna-compose">
+      <div id="donna-chips" class="donna-chips"></div>
+      <div class="donna-inputrow">
+        <input id="donna-input" placeholder="Donna'ya sor…" autocomplete="off">
+        <button id="donna-send" class="donna-send" title="Gönder">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m4 12 16-8-6 16-2.5-6.5L4 12Z"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
 
   <div id="ai-overlay" class="modal-overlay" hidden>
     <div class="modal-card modal-wide-card">
