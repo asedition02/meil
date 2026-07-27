@@ -48,6 +48,7 @@ function avatarHtml(name, email, cls = "") {
 
 // Posta SVG ikonları (Lucide tarzı — emoji yerine, skill kuralı)
 const MI = {
+  chevron: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg>',
   inbox: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5 5h14l3 7v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-6l3-7Z"/></svg>',
   star: (on) => `<svg width="13" height="13" viewBox="0 0 24 24" fill="${on ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2"><path d="m12 3 2.7 5.6 6.3.9-4.5 4.4 1 6.1L12 17.2 6.5 20l1-6.1L3 9.5l6.3-.9L12 3Z"/></svg>`,
   hourglass: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12M6 21h12M8 3v4l4 5 4-5V3M8 21v-4l4-5 4 5v4"/></svg>',
@@ -117,6 +118,40 @@ function formatDateFull(iso) {
       day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit",
     });
   } catch { return iso; }
+}
+
+/* Mail gövdesini okunur HTML'e çevirir:
+   - metin kaçışlanır (XSS yok), bağlantılar tıklanabilir olur
+   - alıntılanan kısım (">" ile başlayan satırlar ve "-----Original Message-----"
+     benzeri ayraçtan sonrası) katlanır — gerçek mail uygulamalarındaki gibi */
+function formatBody(text) {
+  const raw = (text || "").trim();
+  if (!raw) return '<p class="mail-empty">(içerik yok)</p>';
+
+  const linkify = (s) => esc(s).replace(
+    /\b(https?:\/\/[^\s<]+)/g,
+    '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+  );
+
+  const lines = raw.split("\n");
+  const sepRe = /^\s*(-{2,}\s*(original message|forwarded message|iletilen ileti|özgün ileti)\s*-{2,}|_{5,})/i;
+  const onRe = /^\s*(On .+ wrote:|.+ tarihinde .+ (yazdı|şunu yazdı):)\s*$/i;
+
+  let cut = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (sepRe.test(lines[i]) || onRe.test(lines[i])) { cut = i; break; }
+    if (lines[i].startsWith(">") && i > 0) { cut = i; break; }
+  }
+
+  const main = (cut === -1 ? lines : lines.slice(0, cut)).join("\n").trim();
+  const quoted = cut === -1 ? "" : lines.slice(cut).join("\n").trim();
+
+  let html = `<div class="mb-main">${linkify(main)}</div>`;
+  if (quoted) {
+    html += `<details class="mb-quote"><summary>Alıntılanan yazışmayı göster</summary>
+      <div class="mb-quote-body">${linkify(quoted)}</div></details>`;
+  }
+  return html;
 }
 
 function formatSize(bytes) {
@@ -281,38 +316,58 @@ function renderList() {
         ? `<span class="badge thread">${MI.thread} ${e.thread_count}</span>` : "";
       const snoozed = state.activeView === "snoozed" && e.snooze_until
         ? `<span class="badge">${MI.clock} ${formatDateFull(e.snooze_until)}</span>` : "";
+      const prio = (e.priority || "").toLowerCase() === "yüksek" ? " prio" : "";
       return `
-      <div class="email-item${active}${unread}" data-id="${e.id}">
-        ${isUnread ? '<span class="unread-dot"></span>' : ""}
+      <article class="email-item${active}${unread}${prio}" data-id="${e.id}" tabindex="0">
         ${avatarHtml(e.sender_name, e.sender_email)}
         <div class="item-body">
           <div class="row1">
             <span class="from">${esc(e.sender_name || e.sender_email)}</span>
-            <span style="display:flex;align-items:center">
-              <span class="time">${formatDate(e.date)}</span>
-              <button class="star-btn${e.starred ? " on" : ""}" data-star="${e.id}" title="Yıldızla (s)" aria-label="Yıldızla">${MI.star(e.starred)}</button>
-            </span>
+            <span class="time">${formatDate(e.date)}</span>
           </div>
           <div class="subject">${esc(e.subject)}</div>
-          <div class="summary">${esc(e.summary || "")}</div>
+          <div class="summary">${esc(e.summary || (e.body_text || "").replace(/\s+/g, " ").slice(0, 120))}</div>
           <div class="meta">
             <span class="badge cat">${esc(e.category || "")}</span>
-            <span class="badge p-${esc(e.priority || "orta")}">${esc(e.priority || "")}</span>
+            ${(e.priority || "").toLowerCase() === "yüksek" ? '<span class="badge p-yüksek">yüksek</span>' : ""}
             ${threadBadge}${att}${acct}${replied}${snoozed}
           </div>
         </div>
-      </div>`;
+        <div class="item-tools">
+          <button class="star-btn${e.starred ? " on" : ""}" data-star="${e.id}" title="Yıldızla (s)" aria-label="Yıldızla">${MI.star(e.starred)}</button>
+          <button class="quick-btn" data-arch="${e.id}" title="Arşivle (e)" aria-label="Arşivle">${MI.archive}</button>
+        </div>
+      </article>`;
     })
     .join("");
   document.querySelectorAll(".email-item").forEach((item) => {
-    item.onclick = (ev) => {
-      if (ev.target.closest(".star-btn")) return;
+    const open = (ev) => {
+      if (ev.target.closest(".item-tools")) return;
       selectEmail(parseInt(item.dataset.id));
     };
+    item.onclick = open;
+    item.onkeydown = (ev) => { if (ev.key === "Enter") open(ev); };
   });
   document.querySelectorAll(".star-btn[data-star]").forEach((btn) => {
     btn.onclick = () => toggleStar(parseInt(btn.dataset.star));
   });
+  document.querySelectorAll(".quick-btn[data-arch]").forEach((btn) => {
+    btn.onclick = () => archiveEmail(parseInt(btn.dataset.arch));
+  });
+  const cnt = $("#list-count");
+  if (cnt) {
+    const unreadN = emails.filter((e) => (e.thread_unread || 0) > 0 || !e.is_read).length;
+    cnt.textContent = unreadN ? `${unreadN} okunmamış` : `${emails.length} mail`;
+  }
+}
+
+async function archiveEmail(id) {
+  try {
+    await api(`/api/emails/${id}/archive`, { method: "POST" });
+    toast("Arşivlendi");
+    if (state.selectedId === id) state.selectedId = null;
+    loadEmails();
+  } catch (e) { toast(e.message, true); }
 }
 
 async function toggleStar(id) {
@@ -372,64 +427,107 @@ function renderDetail(e, threadMsgs = []) {
     : "";
 
   $("#detail-panel").innerHTML = `
-    <div class="detail-header">
-      ${avatarHtml(e.sender_name, e.sender_email, "large")}
-      <div style="flex:1; min-width:0">
-        <div class="detail-subject">${esc(e.subject)}</div>
-        <div class="detail-meta">
-          <span>${esc(e.sender_name || "")} &lt;${esc(e.sender_email)}&gt;</span>
-          <span>·</span><span>${formatDateFull(e.date)}</span>
-          <span class="badge cat">${esc(e.category || "")}</span>
-          <span class="badge p-${esc(e.priority || "orta")}">${esc(e.priority || "")} öncelik</span>
-          ${acctInfo}
+    <header class="mv-head">
+      <div class="mv-title-row">
+        <h1 class="mv-subject">${esc(e.subject)}</h1>
+        <div class="mv-tools">
+          <button class="icon-btn${e.starred ? " on" : ""}" id="d-star" title="Yıldızla (s)" aria-label="Yıldızla">${MI.star(e.starred)}</button>
+          <button class="icon-btn" id="d-snooze" title="Ertele" aria-label="Ertele">${MI.clock}</button>
+          <button class="icon-btn" id="d-unread" title="Okunmadı işaretle" aria-label="Okunmadı işaretle">${MI.mailUnread}</button>
+          <button class="icon-btn" id="d-archive" title="${e.status === "archived" ? "Gelen kutusuna taşı" : "Arşivle (e)"}" aria-label="Arşivle">${e.status === "archived" ? MI.unarchive : MI.archive}</button>
         </div>
       </div>
-      <div class="detail-toolbar">
-        <button class="icon-btn${e.starred ? " on" : ""}" id="d-star" title="Yıldızla (s)" aria-label="Yıldızla">${MI.star(e.starred)}</button>
-        <button class="icon-btn" id="d-snooze" title="Ertele" aria-label="Ertele">${MI.clock}</button>
-        <button class="icon-btn" id="d-unread" title="Okunmadı işaretle" aria-label="Okunmadı işaretle">${MI.mailUnread}</button>
-        <button class="icon-btn" id="d-archive" title="${e.status === "archived" ? "Gelen kutusuna taşı" : "Arşivle (e)"}" aria-label="Arşivle">${e.status === "archived" ? MI.unarchive : MI.archive}</button>
+      <div class="mv-from">
+        ${avatarHtml(e.sender_name, e.sender_email)}
+        <div class="mv-who">
+          <div class="mv-name">${esc(e.sender_name || e.sender_email)}
+            <span class="mv-addr">&lt;${esc(e.sender_email)}&gt;</span></div>
+          <div class="mv-sub">${formatDateFull(e.date)}${acctInfo ? " · " + acctInfo : ""}</div>
+        </div>
+        <div class="mv-tags">
+          ${e.category ? `<span class="badge cat">${esc(e.category)}</span>` : ""}
+          ${e.priority ? `<span class="badge p-${esc(e.priority)}">${esc(e.priority)}</span>` : ""}
+          ${e.status === "replied" ? '<span class="badge replied">✓ yanıtlandı</span>' : ""}
+        </div>
       </div>
-    </div>
-    <div class="card summary-card">
-      <h3>${MI.sparkle} AI Özeti</h3>
-      <p>${esc(e.summary || "")}</p>
-      ${thread ? `<div id="thread-sum-holder"><button class="pill ghost" id="thread-sum-btn">${MI.thread} Tüm Yazışmayı Özetle (${thread.length} mail)</button></div>` : ""}
-    </div>
-    ${eventCard}
-    ${attachments}
-    <div class="card">
-      <h3>Yanıt Taslağı ${e.status === "replied" ? "— ✓ gönderildi" : "· onayınızla gönderilir"}</h3>
-      <textarea id="reply-text" placeholder="Yanıt taslağı...">${esc(e.suggested_reply || "")}</textarea>
-      <div class="reply-actions">
-        <button class="pill accent" id="send-btn" ${e.status === "replied" ? "disabled" : ""}>${MI.send} Onayla ve Gönder</button>
-        <input id="regen-instruction" placeholder="İsteğe bağlı talimat (ör: daha resmi yaz, toplantı öner...)">
-        <button class="pill ghost" id="regen-btn">${MI.refresh} Yeniden Öner</button>
-        <button class="pill ghost" id="archive-btn">Arşivle</button>
-      </div>
-    </div>
-    ${thread
-      ? `<div class="card">
-          <h3>${MI.thread} Yazışma — ${thread.length} mail</h3>
-          <div class="thread-list">
+    </header>
+
+    <div class="mv-scroll">
+      ${e.summary ? `<div class="mv-ai">
+        <span class="mv-ai-ico">${MI.sparkle}</span>
+        <div class="mv-ai-text"><p>${esc(e.summary)}</p>
+          ${thread ? `<div id="thread-sum-holder"><button class="mv-ai-more" id="thread-sum-btn">Tüm yazışmayı özetle (${thread.length} mail)</button></div>` : ""}
+        </div>
+      </div>` : ""}
+
+      ${e.attachments.length ? `<div class="mv-attach">
+        ${e.attachments.map((a) => `<a class="mv-file" href="/api/dataroom/download?path=${encodeURIComponent(a.path)}" title="${esc(a.filename)}">
+          <span class="mv-file-ico">${MI.paperclip}</span>
+          <span class="mv-file-name">${esc(a.filename)}</span>
+          <span class="mv-file-size">${formatSize(a.size)}</span></a>`).join("")}
+      </div>` : ""}
+
+      ${eventCard}
+
+      ${thread
+        ? `<div class="mv-thread">
             ${thread.map((m, i) => {
               const open = i === thread.length - 1 ? " open" : "";
-              return `<div class="thread-msg${open}">
+              const mine = state.accounts.some((a) => a.email === m.sender_email);
+              return `<div class="tm${open}${mine ? " mine" : ""}">
                 <div class="tm-head" role="button" tabindex="0">
                   ${avatarHtml(m.sender_name, m.sender_email)}
                   <div class="tm-who">
                     <span class="tm-from">${esc(m.sender_name || m.sender_email)}</span>
-                    <span class="tm-snippet">${esc((m.body_text || "").replace(/\s+/g, " ").slice(0, 110))}</span>
+                    <span class="tm-snippet">${esc((m.body_text || "").replace(/\s+/g, " ").slice(0, 120))}</span>
                   </div>
-                  <span class="tm-time">${formatDateFull(m.date)}</span>
+                  <span class="tm-time">${formatDate(m.date)}</span>
+                  <span class="tm-caret">${MI.chevron || "⌄"}</span>
                 </div>
-                <div class="tm-body body-text">${esc(m.body_text || "(içerik yok)")}</div>
+                <div class="tm-body"><div class="mail-body">${formatBody(m.body_text)}</div></div>
               </div>`;
             }).join("")}
-          </div>
-        </div>`
-      : `<div class="card"><h3>Mail İçeriği</h3><div class="body-text">${esc(e.body_text || "(içerik yok)")}</div></div>`}
+          </div>`
+        : `<div class="mail-body">${formatBody(e.body_text)}</div>`}
+    </div>
+
+    <footer class="mv-reply${e.status === "replied" ? " sent" : ""}" id="mv-reply">
+      <div class="mvr-collapsed" id="mvr-collapsed">
+        <button class="mvr-open" id="mvr-open">
+          ${MI.send} ${e.suggested_reply ? "Hazır yanıtı gözden geçir" : "Yanıtla"}
+        </button>
+        ${e.status === "replied" ? '<span class="mvr-note">✓ Bu maile yanıt gönderildi</span>'
+          : e.suggested_reply ? '<span class="mvr-note">AI bir taslak hazırladı</span>' : ""}
+      </div>
+      <div class="mvr-form" id="mvr-form" hidden>
+        <div class="mvr-to">Kime: <b>${esc(e.sender_name || e.sender_email)}</b></div>
+        <textarea id="reply-text" placeholder="Yanıtınızı yazın…">${esc(e.suggested_reply || "")}</textarea>
+        <div class="mvr-instr">
+          <input id="regen-instruction" placeholder="AI'ya talimat: daha resmi yaz, toplantı öner…">
+          <button class="pill ghost" id="regen-btn" title="Yeniden öner">${MI.refresh}</button>
+        </div>
+        <div class="mvr-actions">
+          <button class="pill ghost" id="mvr-close">Kapat</button>
+          <button class="pill ghost" id="archive-btn">Arşivle</button>
+          <button class="pill accent" id="send-btn" ${e.status === "replied" ? "disabled" : ""}>${MI.send} Onayla ve Gönder</button>
+        </div>
+      </div>
+    </footer>
   `;
+
+  // Yanıt alanı: kapalı başlar, tıklayınca açılır (gerçek mail uygulaması gibi)
+  const openReply = () => {
+    $("#mvr-collapsed").hidden = true;
+    $("#mvr-form").hidden = false;
+    $("#mv-reply").classList.add("expanded");
+    $("#reply-text").focus();
+  };
+  $("#mvr-open").onclick = openReply;
+  $("#mvr-close").onclick = () => {
+    $("#mvr-form").hidden = true;
+    $("#mvr-collapsed").hidden = false;
+    $("#mv-reply").classList.remove("expanded");
+  };
 
   document.querySelectorAll(".thread-msg .tm-head").forEach((head) => {
     const toggle = () => head.parentElement.classList.toggle("open");

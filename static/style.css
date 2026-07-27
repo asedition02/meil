@@ -1514,3 +1514,287 @@ table.dataroom input[type="checkbox"] { width: 15px; height: 15px; accent-color:
 .da-err:empty { display: none; }
 .da-done { font-size: 13px; color: var(--muted); font-weight: 650; }
 .da-done.ok { color: var(--green); }
+
+/* ═══════════════════════════════════════════════════════════════
+   POSTA — yeniden tasarım
+   Liste: tarama için yoğun ve sakin. Detay: mesaj gövdesi kahraman,
+   yanıt aşağıda sabit. Yerleşim taşmalarına karşı her satır kilitli.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ---------- Liste başlığı ---------- */
+.panel-header { padding: 14px 14px 10px; border-bottom: 1px solid var(--border); }
+.lp-top { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; min-width: 0; }
+.lp-top h2 { font-size: 16.5px; font-weight: 750; letter-spacing: -0.3px; flex-shrink: 0; }
+.lp-count {
+  font-size: 11.5px; color: var(--muted); font-weight: 600; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.lp-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
+.btn-compose {
+  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+  padding: 7px 14px; border: none; border-radius: 999px; cursor: pointer;
+  font-family: inherit; font-size: 13px; font-weight: 650; color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  box-shadow: 0 4px 12px -4px var(--accent); transition: transform .12s, box-shadow .2s;
+}
+.btn-compose:hover { box-shadow: 0 7px 18px -5px var(--accent); transform: translateY(-1px); }
+.btn-compose:active { transform: translateY(0); }
+
+.lp-filters { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.lp-select {
+  flex-shrink: 0; max-width: 120px; border: 1px solid var(--border); background: var(--panel-2);
+  color: var(--muted); border-radius: 7px; padding: 5px 8px; font-size: 11.5px;
+  font-family: inherit; cursor: pointer;
+}
+.lp-select:focus { outline: none; border-color: var(--accent); }
+.lp-filters .chips { flex: 1; min-width: 0; padding-bottom: 0; }
+
+/* ---------- Liste satırları ---------- */
+#email-list { flex: 1; overflow-y: auto; padding: 6px 8px 14px; }
+.email-item {
+  position: relative; display: flex; gap: 11px; align-items: flex-start;
+  padding: 11px 12px 11px 13px; margin-bottom: 3px;
+  border: 1px solid transparent; border-left: 3px solid transparent;
+  border-radius: 10px; cursor: pointer;
+  transition: background .13s, border-color .13s;
+}
+.email-item::after { content: none; }
+.email-item:hover { background: var(--panel-2); }
+.email-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.email-item.unread { background: var(--panel); border-left-color: var(--accent); }
+.email-item.unread:hover { background: var(--panel-2); }
+.email-item.unread .from { font-weight: 800; }
+.email-item.unread .subject { font-weight: 700; color: var(--text); }
+.email-item.prio { border-left-color: var(--red); }
+.email-item.active {
+  background: var(--accent-soft); border-color: var(--accent); border-left-color: var(--accent);
+}
+.email-item .item-body { flex: 1; min-width: 0; }
+.email-item .row1 { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.email-item .from {
+  font-weight: 650; font-size: 13.5px; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.email-item .time {
+  font-size: 11px; color: var(--muted); flex-shrink: 0;
+  font-variant-numeric: tabular-nums; transition: opacity .13s;
+}
+.email-item .subject {
+  font-size: 13px; margin-top: 2px; color: var(--text); font-weight: 550;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.email-item .summary {
+  font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+/* Rozetler asla taşmaz: tek satır + kenarda yumuşak kesme */
+.email-item .meta {
+  display: flex; gap: 5px; margin-top: 7px; align-items: center;
+  flex-wrap: nowrap; overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent);
+          mask-image: linear-gradient(90deg, #000 88%, transparent);
+}
+.email-item .meta > * { flex-shrink: 0; }
+
+/* Hover'da hızlı eylemler tarihin yerini alır (Gmail davranışı) */
+.item-tools {
+  position: absolute; top: 8px; right: 10px; display: flex; gap: 2px;
+  opacity: 0; pointer-events: none; transition: opacity .13s;
+  background: linear-gradient(90deg, transparent, var(--panel-2) 22%);
+  padding-left: 14px; border-radius: 8px;
+}
+.email-item:hover .item-tools,
+.email-item:focus-within .item-tools { opacity: 1; pointer-events: auto; }
+.email-item:hover .time { opacity: 0; }
+.email-item .star-btn.on { opacity: 1; }
+.email-item:not(:hover) .star-btn.on { position: absolute; top: 10px; right: 10px; opacity: 1; }
+.quick-btn, .item-tools .star-btn {
+  border: none; background: var(--panel); color: var(--muted); cursor: pointer;
+  width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center;
+  opacity: 1; padding: 0; transition: background .13s, color .13s;
+}
+.quick-btn:hover { background: var(--accent-soft); color: var(--accent-text); }
+.item-tools .star-btn:hover { background: var(--amber-soft); color: var(--amber); }
+.item-tools .star-btn.on { color: var(--amber); }
+
+/* ---------- Detay: gerçek mail görünümü ---------- */
+#detail-panel {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 0; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+#detail-panel > .placeholder { margin: auto; }
+
+.mv-head { padding: 20px 26px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.mv-title-row { display: flex; align-items: flex-start; gap: 14px; }
+.mv-subject {
+  flex: 1; min-width: 0; font-size: 20px; font-weight: 750;
+  letter-spacing: -0.3px; line-height: 1.35; word-break: break-word;
+}
+.mv-tools { display: flex; gap: 3px; flex-shrink: 0; }
+.mv-from { display: flex; align-items: center; gap: 11px; margin-top: 14px; min-width: 0; }
+.mv-from .avatar { width: 34px; height: 34px; border-radius: 50%; font-size: 12.5px; }
+.mv-who { flex: 1; min-width: 0; }
+.mv-name {
+  font-size: 13.5px; font-weight: 700; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.mv-addr { font-weight: 400; color: var(--muted); font-size: 12.5px; }
+.mv-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.mv-sub .badge { margin-left: 2px; }
+.mv-tags { display: flex; gap: 5px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; max-width: 45%; }
+
+.mv-scroll { flex: 1; overflow-y: auto; padding: 20px 26px 28px; }
+
+/* AI özeti — kart değil, ince bir vurgu şeridi */
+.mv-ai {
+  display: flex; gap: 11px; align-items: flex-start; margin-bottom: 20px;
+  padding: 12px 15px; border-radius: 11px;
+  background: var(--accent-soft); border-left: 3px solid var(--accent);
+}
+.mv-ai-ico { color: var(--accent-text); flex-shrink: 0; line-height: 1; margin-top: 1px; }
+.mv-ai-text { min-width: 0; }
+.mv-ai-text p { font-size: 13.5px; line-height: 1.55; color: var(--text); }
+.mv-ai-more {
+  margin-top: 8px; border: none; background: none; padding: 0; cursor: pointer;
+  font-family: inherit; font-size: 12px; font-weight: 650; color: var(--accent-text);
+  text-decoration: underline; text-underline-offset: 3px;
+}
+
+/* Ekler — sohbet uygulamalarındaki gibi dosya çipleri */
+.mv-attach { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.mv-file {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 260px;
+  padding: 8px 13px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel-2); text-decoration: none; color: var(--text);
+  font-size: 12.5px; transition: border-color .15s, background .15s;
+}
+.mv-file:hover { border-color: var(--accent); background: var(--accent-soft); }
+.mv-file-ico { color: var(--muted); flex-shrink: 0; line-height: 1; }
+.mv-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.mv-file-size { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+
+/* Mesaj gövdesi — sayfanın kahramanı */
+.mail-body {
+  font-size: 14.5px; line-height: 1.72; color: var(--text);
+  max-width: 68ch; word-break: break-word;
+}
+.mail-body .mb-main { white-space: pre-wrap; }
+.mail-body a { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; }
+.mail-body a:hover { text-decoration-thickness: 2px; }
+.mail-empty { color: var(--muted); font-style: italic; }
+.mb-quote { margin-top: 18px; }
+.mb-quote summary {
+  cursor: pointer; font-size: 12px; color: var(--muted); font-weight: 600;
+  list-style: none; display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 11px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel-2);
+}
+.mb-quote summary::-webkit-details-marker { display: none; }
+.mb-quote summary:hover { border-color: var(--accent); color: var(--accent-text); }
+.mb-quote-body {
+  white-space: pre-wrap; margin-top: 12px; padding-left: 14px;
+  border-left: 3px solid var(--border); color: var(--muted); font-size: 13.5px; line-height: 1.6;
+}
+
+/* Yazışma dizisi — katlanabilir mesajlar */
+.mv-thread { display: flex; flex-direction: column; gap: 8px; }
+.tm { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--panel); }
+.tm.mine { background: var(--panel-2); }
+.tm-head {
+  display: flex; align-items: center; gap: 11px; padding: 11px 14px; cursor: pointer;
+  min-width: 0; transition: background .13s;
+}
+.tm-head:hover { background: var(--panel-2); }
+.tm-head .avatar { width: 30px; height: 30px; border-radius: 50%; font-size: 11.5px; }
+.tm-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tm-from { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tm-snippet { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tm.open .tm-snippet { display: none; }
+.tm-time { font-size: 11px; color: var(--muted); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.tm-caret { color: var(--muted); flex-shrink: 0; display: flex; transition: transform .2s; }
+.tm.open .tm-caret { transform: rotate(180deg); }
+.tm-body { display: none; padding: 4px 16px 16px; border-top: 1px solid var(--border); }
+.tm.open .tm-body { display: block; }
+.tm-body .mail-body { padding-top: 12px; }
+
+/* Yanıt alanı — aşağıda sabit, açılınca büyüyen */
+.mv-reply { flex-shrink: 0; border-top: 1px solid var(--border); background: var(--panel-2); }
+.mvr-collapsed { display: flex; align-items: center; gap: 12px; padding: 12px 26px; min-width: 0; }
+.mvr-open {
+  display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 9px 18px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--panel); color: var(--text); cursor: pointer;
+  font-family: inherit; font-size: 13.5px; font-weight: 650;
+  transition: border-color .15s, box-shadow .2s, transform .12s;
+}
+.mvr-open:hover { border-color: var(--accent); color: var(--accent-text); box-shadow: 0 4px 12px -6px var(--accent); }
+.mvr-open:active { transform: translateY(1px); }
+.mvr-note {
+  font-size: 12px; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.mv-reply.sent .mvr-note { color: var(--green); font-weight: 600; }
+.mvr-form { padding: 14px 26px 18px; display: flex; flex-direction: column; gap: 10px; }
+.mvr-to { font-size: 12px; color: var(--muted); }
+.mvr-to b { color: var(--text); }
+.mvr-form textarea {
+  width: 100%; min-height: 130px; max-height: 40vh; resize: vertical;
+  padding: 13px 15px; font-family: inherit; font-size: 14px; line-height: 1.6;
+  border: 1px solid var(--border); border-radius: 11px; background: var(--panel); color: var(--text);
+}
+.mvr-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.mvr-instr { display: flex; gap: 8px; }
+.mvr-instr input {
+  flex: 1; min-width: 0; padding: 9px 14px; font-size: 12.5px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--panel); color: var(--text);
+}
+.mvr-instr input:focus { outline: none; border-color: var(--accent); }
+.mvr-instr .pill { flex-shrink: 0; padding: 8px 13px; }
+/* Eylem satırı asla sarmalanmaz: gönder sağda sabit, diğerleri solda */
+.mvr-actions { display: flex; gap: 8px; align-items: center; }
+.mvr-actions .pill { flex-shrink: 0; padding: 9px 16px; font-size: 13px; }
+.mvr-actions #send-btn { margin-left: auto; }
+
+/* Dar ekran: detay panelini tam genişliğe al */
+@media (max-width: 1000px) {
+  .mv-head, .mv-scroll, .mvr-collapsed, .mvr-form { padding-left: 16px; padding-right: 16px; }
+  .mv-tags { display: none; }
+  .mail-body { max-width: none; }
+}
+
+/* [hidden] özniteliği, display kuralları tarafından ezilmemeli */
+.mvr-form[hidden], .mvr-collapsed[hidden], .donna-panel[hidden] { display: none !important; }
+
+/* Tespit edilen etkinlik — yeni tasarım diline uygun */
+.mv-scroll .event-card {
+  background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 11px; padding: 14px 16px; margin-bottom: 20px;
+}
+.mv-scroll .event-card h3 { margin-bottom: 8px; }
+.mv-scroll .event-card .ev-line { font-size: 13.5px; line-height: 1.5; }
+.mv-scroll .event-card .ev-actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.mv-scroll .event-card select {
+  padding: 7px 11px; font-size: 12.5px; font-family: inherit; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--panel); color: var(--text); max-width: 190px;
+}
+
+/* ---------- Posta: duyarlı yerleşim ---------- */
+/* Orta genişlik: liste daralır, detay nefes alır */
+@media (max-width: 1180px) {
+  #list-panel { width: 330px; }
+}
+@media (max-width: 1000px) {
+  #list-panel { width: 290px; }
+  .email-item .summary { -webkit-line-clamp: 1; }
+  .mv-subject { font-size: 18px; }
+}
+/* Dar ekran: üst üste yığ — liste üstte, mail altta */
+@media (max-width: 820px) {
+  #view-inbox { flex-direction: column; }
+  #list-panel { width: auto; max-height: 42vh; }
+  #detail-panel { min-height: 320px; }
+  .lp-filters { flex-wrap: wrap; }
+}
+/* Yanıt alanı açıkken bile gövde için yer kalsın */
+.mv-reply.expanded { max-height: 62%; overflow-y: auto; }
+.mvr-form textarea { min-height: 110px; }
