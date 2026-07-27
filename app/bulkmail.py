@@ -210,16 +210,21 @@ def guess_email_column(columns: list[str], rows: list[dict]) -> str:
     return columns[0] if columns else ""
 
 
-def _guess_column(columns: list[str], rows: list[dict], pattern: str,
-                  min_non_empty: int = 3) -> str:
+def _guess_column(columns: list[str], rows: list[dict], pattern: str) -> str:
+    """Yalnızca başlık adına bakar; emin olamıyorsa boş döner.
+
+    İçeriğe bakıp tahmin yürütmek burada tehlikeli: e-posta sütununda değerin
+    gerçekten e-posta olduğu doğrulanabilir, ama bir metnin "konu" mu yoksa
+    "isim" mi olduğu ayırt edilemez. Yanlış tahmin, konusu ve içeriği alıcının
+    adından ibaret mailler gönderilmesine yol açar. Bu yüzden başlık eşleşmezse
+    boş döner ve arayüz "Sabit metin kullan" seçeneğinde kalır.
+    """
     regex = re.compile(pattern, re.I)
     for col in columns:
         if regex.search(col):
-            return col
-    for col in columns:
-        non_empty = sum(1 for r in rows[:50] if str(r.get(col, "")).strip())
-        if non_empty >= min_non_empty:
-            return col
+            # Başlık uyuyor ama sütun tamamen boşsa yine de seçme
+            if any(str(r.get(col, "")).strip() for r in rows[:50]):
+                return col
     return ""
 
 
