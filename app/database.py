@@ -524,6 +524,21 @@ def list_events(start: str, end: str) -> list[dict]:
         return out
 
 
+def update_event(event_id: int, **fields):
+    """Etkinliğin verilen alanlarını günceller."""
+    allowed = {"title", "start", "end", "all_day", "location", "notes", "calendar_id"}
+    sets, values = [], []
+    for key, val in fields.items():
+        if key in allowed:
+            sets.append(f"{key} = ?")
+            values.append(val)
+    if not sets:
+        return
+    values.append(event_id)
+    with get_db() as db:
+        db.execute(f"UPDATE events SET {', '.join(sets)} WHERE id = ?", values)
+
+
 def delete_event(event_id: int):
     with get_db() as db:
         db.execute("DELETE FROM events WHERE id = ?", (event_id,))

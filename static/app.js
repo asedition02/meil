@@ -2606,6 +2606,7 @@ async function askDonna() {
     el.querySelectorAll(".donna-src").forEach((b) => {
       b.onclick = () => openMailFromDonna(parseInt(b.dataset.mail, 10));
     });
+    if (r.action && r.action.type && r.action.type !== "yok") renderDonnaAction(r.action);
     setDonnaChips(r.follow_ups || []);
     $("#donna-body").scrollTop = $("#donna-body").scrollHeight;
   } catch (e) {
@@ -2618,6 +2619,89 @@ async function askDonna() {
     $("#donna-send").disabled = false;
     input.focus();
   }
+}
+
+// --- Donna'nın hazırladığı işlem: onay kartı ---
+
+const ACTION_META = {
+  mail_yanitla:      ["✉️", "Yanıt gönder", "Gönder"],
+  etkinlik_olustur:  ["📅", "Etkinlik oluştur", "Oluştur"],
+  etkinlik_guncelle: ["✏️", "Etkinliği güncelle", "Güncelle"],
+  etkinlik_sil:      ["🗑️", "Etkinliği sil", "Sil"],
+  belge_sil:         ["🗑️", "Belgeyi sil", "Sil"],
+  belge_yukle:       ["📎", "Belge yükle", "Yükleme ekranını aç"],
+};
+
+function renderDonnaAction(a) {
+  const [icon, heading, cta] = ACTION_META[a.type] || ["⚙️", "İşlem", "Uygula"];
+  const danger = a.type === "etkinlik_sil" || a.type === "belge_sil";
+  const id = `da${Date.now()}`;
+
+  let fields = "";
+  if (a.type === "mail_yanitla") {
+    fields = `
+      <div class="da-line">Kime: <b>${esc(a.mail_to || "—")}</b> · ${esc(a.mail_subject || "")}</div>
+      <textarea class="da-input da-text" rows="6" data-f="reply_text">${esc(a.reply_text || "")}</textarea>`;
+  } else if (a.type === "etkinlik_olustur" || a.type === "etkinlik_guncelle") {
+    fields = `
+      <input class="da-input" data-f="title" value="${esc(a.title || a.event_title || "")}" placeholder="Başlık">
+      <div class="da-row">
+        <input class="da-input" data-f="date" type="date" value="${esc(a.date || "")}">
+        <input class="da-input" data-f="time" type="time" value="${esc(a.time || "")}">
+        <input class="da-input da-dur" data-f="duration_minutes" type="number" min="15" step="15"
+               value="${a.duration_minutes || 60}" title="Süre (dk)">
+      </div>
+      <input class="da-input" data-f="location" value="${esc(a.location || "")}" placeholder="Yer (isteğe bağlı)">`;
+  } else if (a.type === "etkinlik_sil") {
+    fields = `<div class="da-line"><b>${esc(a.event_title || "")}</b> · ${esc(a.event_when || "")}</div>`;
+  } else if (a.type === "belge_sil") {
+    fields = `<div class="da-line"><code>${esc(a.path || "")}</code></div>`;
+  }
+
+  donnaAppend(`
+    <div class="donna-action${danger ? " danger" : ""}" id="${id}">
+      <div class="da-head"><span>${icon}</span><b>${esc(heading)}</b></div>
+      ${a.summary ? `<div class="da-sum">${esc(a.summary)}</div>` : ""}
+      ${fields}
+      <div class="da-btns">
+        <button class="pill da-cancel">Vazgeç</button>
+        <button class="pill accent da-ok${danger ? " danger" : ""}">${esc(cta)}</button>
+      </div>
+      <p class="da-err"></p>
+    </div>`);
+
+  const card = document.getElementById(id);
+  card.querySelector(".da-cancel").onclick = () => {
+    card.classList.add("done");
+    card.innerHTML = '<div class="da-done">Vazgeçildi</div>';
+  };
+  card.querySelector(".da-ok").onclick = async () => {
+    const payload = { ...a };
+    card.querySelectorAll("[data-f]").forEach((el) => {
+      payload[el.dataset.f] = el.type === "number" ? parseInt(el.value, 10) || 60 : el.value;
+    });
+    if (a.type === "belge_yukle") {
+      donnaClose();
+      document.querySelector('.rail-btn[data-view="dataroom"]').click();
+      setTimeout(() => { const f = $("#dr-upload") || $("#upload-input"); if (f) f.click(); }, 300);
+      return;
+    }
+    const btn = card.querySelector(".da-ok");
+    btn.disabled = true; btn.textContent = "Uygulanıyor…";
+    try {
+      const res = await api("/api/donna/act", { method: "POST", body: JSON.stringify(payload) });
+      card.classList.add("done");
+      card.innerHTML = `<div class="da-done ok">✓ ${esc(res.message || "Yapıldı")}</div>`;
+      toast(res.message || "İşlem tamamlandı");
+      if (payload.type.startsWith("etkinlik")) { if (typeof loadCalendar === "function") loadCalendar(); }
+      if (payload.type === "mail_yanitla" && typeof loadEmails === "function") loadEmails();
+      if (payload.type === "belge_sil" && typeof loadDataroom === "function") loadDataroom();
+      donna.briefed = false;   // brifing artık eski
+    } catch (e) {
+      card.querySelector(".da-err").textContent = e.message;
+      btn.disabled = false; btn.textContent = cta;
+    }
+  };
 }
 
 $("#donna-send").onclick = askDonna;

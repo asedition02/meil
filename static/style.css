@@ -1484,3 +1484,33 @@ table.dataroom input[type="checkbox"] { width: 15px; height: 15px; accent-color:
   background: linear-gradient(135deg, #8b5cf6, var(--accent));
 }
 .donna-send:disabled { opacity: .5; cursor: default; }
+
+/* Donna — işlem onay kartı */
+.donna-action {
+  align-self: stretch; display: flex; flex-direction: column; gap: 8px;
+  padding: 13px; border: 1px solid var(--accent); border-radius: 13px;
+  background: var(--accent-soft);
+}
+.donna-action.danger { border-color: var(--red); background: var(--red-soft); }
+.donna-action.done { border-style: dashed; opacity: .8; }
+.da-head { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.da-head b { font-weight: 750; }
+.da-sum { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.da-line { font-size: 12.5px; color: var(--text); }
+.da-line code { font-family: "Fira Code", monospace; font-size: 11.5px; word-break: break-all; }
+.da-input {
+  width: 100%; padding: 9px 11px; font-size: 13px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: 9px; background: var(--panel); color: var(--text);
+}
+.da-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.da-text { resize: vertical; line-height: 1.5; }
+.da-row { display: flex; gap: 6px; }
+.da-row .da-input { flex: 1; min-width: 0; }
+.da-row .da-dur { max-width: 82px; }
+.da-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 2px; }
+.da-btns .pill { padding: 7px 15px; font-size: 13px; }
+.da-btns .pill.danger { background: var(--red); color: #fff; }
+.da-err { font-size: 12px; color: var(--red); font-weight: 600; }
+.da-err:empty { display: none; }
+.da-done { font-size: 13px; color: var(--muted); font-weight: 650; }
+.da-done.ok { color: var(--green); }

@@ -863,6 +863,21 @@ def create_event(req: EventRequest):
                          req.location.strip(), req.notes.strip(), req.calendar_id, "manual")
 
 
+@app.put("/api/events/{event_id}")
+def edit_event(event_id: int, req: EventRequest):
+    """Etkinliği günceller (yerel takvim; harici kaynaklar eşitlemede geri gelir)."""
+    ev = database.get_event(event_id)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Etkinlik bulunamadı")
+    if not req.title.strip():
+        raise HTTPException(status_code=400, detail="Etkinlik başlığı gerekli")
+    start, end, all_day = _build_times(req.date, req.time, req.duration_minutes)
+    database.update_event(event_id, title=req.title.strip(), start=start, end=end,
+                          all_day=1 if all_day else 0, location=req.location.strip(),
+                          notes=req.notes.strip())
+    return {"ok": True, "event": database.get_event(event_id)}
+
+
 @app.delete("/api/events/{event_id}")
 def remove_event(event_id: int):
     ev = database.get_event(event_id)
@@ -1288,6 +1303,64 @@ def donna_brief():
     except Exception as e:
         log.exception("Donna brifing hatası")
         raise HTTPException(status_code=502, detail=str(e)[:300])
+
+
+class DonnaActionRequest(BaseModel):
+    """Kullanıcının onayladığı (ve gerekirse düzenlediği) işlem."""
+    type: str
+    email_id: int = 0
+    reply_text: str = ""
+    event_id: int = 0
+    title: str = ""
+    date: str = ""
+    time: str = ""
+    duration_minutes: int = 60
+    location: str = ""
+    notes: str = ""
+    path: str = ""
+
+
+@app.post("/api/donna/act")
+def donna_act(req: DonnaActionRequest):
+    """Donna'nın hazırladığı işlemi UYGULAR — yalnızca kullanıcı onayladıktan sonra çağrılır.
+
+    Mevcut uçların iş mantığını yeniden kullanır; her işlem ayrıca doğrulanır.
+    """
+    t = (req.type or "").strip()
+
+    if t == "mail_yanitla":
+        if not req.reply_text.strip():
+            raise HTTPException(status_code=400, detail="Yanıt metni boş olamaz")
+        send_reply(req.email_id, ReplyRequest(reply_text=req.reply_text))
+        return {"ok": True, "message": "Yanıt gönderildi"}
+
+    if t == "etkinlik_olustur":
+        ev = create_event(EventRequest(
+            title=req.title, date=req.date, time=req.time,
+            duration_minutes=req.duration_minutes or 60,
+            location=req.location, notes=req.notes,
+        ))
+        return {"ok": True, "message": "Etkinlik oluşturuldu", "event": ev}
+
+    if t == "etkinlik_guncelle":
+        edit_event(req.event_id, EventRequest(
+            title=req.title, date=req.date, time=req.time,
+            duration_minutes=req.duration_minutes or 60,
+            location=req.location, notes=req.notes,
+        ))
+        return {"ok": True, "message": "Etkinlik güncellendi"}
+
+    if t == "etkinlik_sil":
+        remove_event(req.event_id)
+        return {"ok": True, "message": "Etkinlik silindi"}
+
+    if t == "belge_sil":
+        if not req.path.strip():
+            raise HTTPException(status_code=400, detail="Dosya yolu gerekli")
+        dataroom_delete(req.path)
+        return {"ok": True, "message": "Belge silindi"}
+
+    raise HTTPException(status_code=400, detail=f"Bilinmeyen işlem: {t}")
 
 
 @app.post("/api/donna/ask")

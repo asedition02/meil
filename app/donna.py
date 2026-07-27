@@ -28,7 +28,7 @@ def _fmt_event(e: dict) -> str:
     when = start + (f"–{end}" if end and not e.get("all_day") else "")
     if e.get("all_day"):
         when = start[:10] + " (tüm gün)"
-    parts = [f"{when} · {e.get('title') or 'Başlıksız'}"]
+    parts = [f"[etkinlik:{e.get('id')}] {when} · {e.get('title') or 'Başlıksız'}"]
     if e.get("location"):
         parts.append(f"yer: {e['location']}")
     if e.get("calendar_name"):
@@ -224,6 +224,37 @@ BRIEF_SCHEMA = {
 }
 
 
+ACTION_TYPES = ["yok", "mail_yanitla", "etkinlik_olustur", "etkinlik_guncelle",
+                "etkinlik_sil", "belge_sil", "belge_yukle"]
+
+ACTION_SCHEMA = {
+    "type": "object",
+    "description": (
+        "Kullanıcı bir işlem yapılmasını istiyorsa doldur; yalnızca soru sorduysa "
+        "type='yok' bırak. İşlem KULLANICI ONAYINDAN SONRA yapılır, sen sadece hazırlarsın."
+    ),
+    "properties": {
+        "type": {"type": "string", "enum": ACTION_TYPES,
+                 "description": "Yapılacak işlem türü; işlem yoksa 'yok'."},
+        "summary": {"type": "string",
+                    "description": "Onay kartında görünecek tek cümlelik açıklama (ör. 'Ayşe'ye yanıt gönderilecek')."},
+        "email_id": {"type": "integer", "description": "mail_yanitla için mailin ID'si; değilse 0."},
+        "reply_text": {"type": "string",
+                       "description": "mail_yanitla için gönderilmeye hazır yanıt metni (imza dahil). Değilse boş."},
+        "event_id": {"type": "integer",
+                     "description": "etkinlik_guncelle / etkinlik_sil için etkinliğin ID'si; değilse 0."},
+        "title": {"type": "string", "description": "Etkinlik başlığı; ilgisizse boş."},
+        "date": {"type": "string", "description": "YYYY-MM-DD; ilgisizse boş."},
+        "time": {"type": "string", "description": "HH:MM (24 saat); tüm gün ise boş."},
+        "duration_minutes": {"type": "integer", "description": "Etkinlik süresi; bilinmiyorsa 60, ilgisizse 0."},
+        "location": {"type": "string", "description": "Etkinlik yeri; yoksa boş."},
+        "path": {"type": "string", "description": "belge_sil için dataroom dosya yolu; değilse boş."},
+    },
+    "required": ["type", "summary", "email_id", "reply_text", "event_id",
+                 "title", "date", "time", "duration_minutes", "location", "path"],
+    "additionalProperties": False,
+}
+
 ASK_SCHEMA = {
     "type": "object",
     "properties": {
@@ -236,13 +267,14 @@ ASK_SCHEMA = {
             "items": {"type": "integer"},
             "description": "Yanıtta gerçekten kullanılan maillerin ID'leri; kullanılmadıysa boş dizi.",
         },
+        "action": ACTION_SCHEMA,
         "follow_ups": {
             "type": "array",
             "items": {"type": "string"},
             "description": "Kullanıcının sorabileceği 2-3 kısa devam sorusu.",
         },
     },
-    "required": ["answer", "email_ids", "follow_ups"],
+    "required": ["answer", "email_ids", "action", "follow_ups"],
     "additionalProperties": False,
 }
 
@@ -287,6 +319,20 @@ def ask(question: str, history: list[dict] | None = None, user_name: str = "") -
     system += (
         "\n\nGÖREV: Kullanıcının sorusunu, sana verilen mail/takvim/belge verilerine "
         "dayanarak yanıtla. Yanıtın kısa olsun; gereksiz tekrar yapma."
+        "\n\nİŞLEM YAPMA: Kullanıcı bir şey yapılmasını istiyorsa (maile yanıt yaz/gönder, "
+        "etkinlik oluştur/güncelle/sil, belge sil veya yükle) `action` alanını doldur:"
+        "\n- mail_yanitla: reply_text'e gönderilmeye hazır tam yanıtı yaz; email_id'yi verilerdeki "
+        "[mail:ID] değerinden al."
+        "\n- etkinlik_olustur: title/date/time/duration_minutes/location doldur; göreli tarihleri "
+        "bugünün tarihine göre çöz."
+        "\n- etkinlik_guncelle / etkinlik_sil: event_id'yi verilerdeki [etkinlik:ID] değerinden al. "
+        "Güncellemede değişmeyen alanları da mevcut değerleriyle doldur."
+        "\n- belge_sil: path'i verilerdeki [belge] yolundan aynen al."
+        "\n- belge_yukle: dosyayı kullanıcı seçeceği için sadece type ve summary yeterli."
+        "\nSadece soru soruluyorsa type='yok' bırak. İşlemi SEN yapmıyorsun — hazırladığın işlem "
+        "kullanıcıya onay kartı olarak gösterilir, onaylarsa uygulanır. Bunu yanıtında belirt "
+        "(ör. 'Hazırladım, onaylarsan gönderiyorum'). Emin olamadığın bir ID veya yol varsa "
+        "işlem üretme, kullanıcıya sor."
     )
 
     messages = []
@@ -311,4 +357,48 @@ def ask(question: str, history: list[dict] | None = None, user_name: str = "") -
          "sender": known[i].get("sender_name") or known[i].get("sender_email") or ""}
         for i in ids if i in known
     ]
+
+    # Önerilen işlemi zenginleştir (onay kartında bağlam göstermek için)
+    action = result.get("action") or {}
+    if action.get("type") and action["type"] != "yok":
+        if action["type"] == "mail_yanitla":
+            m = known.get(action.get("email_id"))
+            if m:
+                action["mail_subject"] = m.get("subject") or "(konusuz)"
+                action["mail_to"] = m.get("sender_name") or m.get("sender_email") or ""
+            else:
+                action["type"] = "yok"          # bilinmeyen mail → işlem üretme
+        elif action["type"] in ("etkinlik_guncelle", "etkinlik_sil"):
+            ev = next((e for e in ctx["events"] if e.get("id") == action.get("event_id")), None)
+            if ev:
+                action["event_title"] = ev.get("title") or ""
+                action["event_when"] = (ev.get("start") or "").replace("T", " ")[:16]
+            else:
+                action["type"] = "yok"
+        result["action"] = action
+    else:
+        result["action"] = {"type": "yok"}
     return result
+
+
+# ---------------------------------------------------------------------------
+# Onaylanan işlemin uygulanması
+# ---------------------------------------------------------------------------
+
+def describe_action(action: dict) -> str:
+    """Onay kartı için kısa, insan tarafından okunur açıklama."""
+    t = action.get("type")
+    if t == "mail_yanitla":
+        return f"{action.get('mail_to') or 'alıcıya'} yanıt gönderilecek"
+    if t == "etkinlik_olustur":
+        return f"'{action.get('title')}' etkinliği {action.get('date')} {action.get('time')} olarak eklenecek".strip()
+    if t == "etkinlik_guncelle":
+        return f"'{action.get('event_title') or action.get('title')}' etkinliği güncellenecek"
+    if t == "etkinlik_sil":
+        return f"'{action.get('event_title')}' etkinliği silinecek"
+    if t == "belge_sil":
+        return f"{action.get('path')} silinecek"
+    if t == "belge_yukle":
+        return "Dataroom'a belge yükleme ekranı açılacak"
+    return ""
+
