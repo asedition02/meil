@@ -248,10 +248,10 @@
         <div class="card form-card">
           <h3><span class="step-num">1</span> Alıcı listesi</h3>
           <div id="bulk-drop" class="bulk-drop">
-            <input type="file" id="bulk-file" accept=".xlsx,.xlsm,.csv" hidden>
+            <input type="file" id="bulk-file" accept=".numbers,.xlsx,.xlsm,.csv" hidden>
             <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
-            <b>Excel veya CSV dosyası seçin</b>
-            <span>.xlsx veya .csv — ilk satır sütun başlıkları olmalı, bir sütun e-posta içermeli</span>
+            <b>Numbers, Excel veya CSV dosyası seçin</b>
+            <span>.numbers, .xlsx veya .csv — ilk satır sütun başlıkları olmalı, bir sütun e-posta içermeli</span>
           </div>
           <div id="bulk-file-info" style="display:none"></div>
           <div id="bulk-preview"></div>
@@ -267,6 +267,12 @@
             <label>E-posta sütunu
               <select id="bulk-email-col"></select>
             </label>
+            <label>Konu sütunu (isteğe bağlı)
+              <select id="bulk-subject-col"></select>
+            </label>
+            <label>İçerik sütunu (isteğe bağlı)
+              <select id="bulk-body-col"></select>
+            </label>
             <label>Görünen ad (isteğe bağlı)
               <input id="bulk-from-name" placeholder="ör. Meil Ekibi">
             </label>
@@ -279,14 +285,14 @@
               </select>
             </label>
           </div>
-          <label class="bulk-label">Konu
+          <label class="bulk-label">Sabit konu (sütun seçili değilse)
             <input id="bulk-subject" placeholder="Merhaba {isim}, teklifiniz hazır">
           </label>
           <div class="bulk-chips-row">
             <span class="bulk-chips-label">Yer tutucu ekle:</span>
             <div id="bulk-chips" class="bulk-chips"></div>
           </div>
-          <label class="bulk-label">Mesaj
+          <label class="bulk-label">Sabit mesaj (sütun seçili değilse)
             <textarea id="bulk-body" rows="9" placeholder="Merhaba {isim},&#10;&#10;..."></textarea>
           </label>
           <div class="bulk-opts">

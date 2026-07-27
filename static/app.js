@@ -1749,7 +1749,8 @@ async function uploadBulkFile(file) {
       <button class="pill mini" id="bulk-clear">Değiştir</button></div>`;
     $("#bulk-clear").onclick = resetBulk;
     renderBulkPreview(data.preview, data.columns);
-    fillBulkColumns(data.columns, data.guessed_email_column);
+    fillBulkColumns(data.columns, data.guessed_email_column,
+      data.guessed_subject_column, data.guessed_body_column);
     $("#bulk-compose").style.display = "";
     $("#bulk-sendcard").style.display = "";
     updateBulkSummary();
@@ -1776,14 +1777,28 @@ function renderBulkPreview(rows, columns) {
     </table></div><p class="hint">İlk ${rows.length} satır gösteriliyor.</p>`;
 }
 
-function fillBulkColumns(columns, guessed) {
+function fillBulkColumns(columns, guessedEmail, guessedSubject, guessedBody) {
   $("#bulk-email-col").innerHTML = columns
-    .map((c) => `<option value="${esc(c)}"${c === guessed ? " selected" : ""}>${esc(c)}</option>`).join("");
+    .map((c) => `<option value="${esc(c)}"${c === guessedEmail ? " selected" : ""}>${esc(c)}</option>`).join("");
+
+  const opt = ['<option value="">Sabit metin kullan</option>',
+    ...columns.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`),
+  ].join("");
+  $("#bulk-subject-col").innerHTML = opt;
+  $("#bulk-body-col").innerHTML = opt;
+  if (guessedSubject && columns.includes(guessedSubject)) $("#bulk-subject-col").value = guessedSubject;
+  if (guessedBody && columns.includes(guessedBody)) $("#bulk-body-col").value = guessedBody;
+
   $("#bulk-chips").innerHTML = columns
     .map((c) => `<button class="bulk-chip" data-col="${esc(c)}">{${esc(c)}}</button>`).join("");
   $("#bulk-chips").querySelectorAll(".bulk-chip").forEach((chip) => {
     chip.onclick = () => insertPlaceholder(`{${chip.dataset.col}}`);
   });
+}
+
+function resolveBulkText(row, colId, inputId) {
+  const col = $(colId).value;
+  return col ? String(row[col] || "") : $(inputId).value;
 }
 
 function insertPlaceholder(text) {
@@ -1803,6 +1818,8 @@ $("#bulk-email-col").onchange = async () => {
     updateBulkSummary();
   } catch { /* yoksay */ }
 };
+$("#bulk-subject-col").onchange = updateBulkSummary;
+$("#bulk-body-col").onchange = updateBulkSummary;
 
 function bulkPayload(extra = {}) {
   return {
@@ -1811,6 +1828,8 @@ function bulkPayload(extra = {}) {
     email_column: $("#bulk-email-col").value,
     subject: $("#bulk-subject").value,
     body: $("#bulk-body").value,
+    subject_column: $("#bulk-subject-col").value,
+    body_column: $("#bulk-body-col").value,
     is_html: $("#bulk-html").checked,
     from_name: $("#bulk-from-name").value,
     delay_ms: parseInt($("#bulk-delay").value, 10),
@@ -1834,11 +1853,12 @@ $("#bulk-preview-btn").onclick = () => {
   const render = (t) => (t || "").replace(/\{\s*([^}]+?)\s*\}/g, (m, k) => (row[k] ?? ""));
   const box = $("#bulk-render-preview");
   box.style.display = "";
-  const body = render($("#bulk-body").value);
+  const subject = render(resolveBulkText(row, "#bulk-subject-col", "#bulk-subject"));
+  const body = render(resolveBulkText(row, "#bulk-body-col", "#bulk-body"));
   box.innerHTML = `<div class="bulk-prev-mail">
     <div class="bulk-prev-head">
       <span class="bulk-prev-to">Kime: ${esc(row[$("#bulk-email-col").value] || "—")}</span>
-      <span class="bulk-prev-sub">${esc(render($("#bulk-subject").value)) || "(konu yok)"}</span>
+      <span class="bulk-prev-sub">${esc(subject) || "(konu yok)"}</span>
     </div>
     <div class="bulk-prev-body">${$("#bulk-html").checked ? body : esc(body).replace(/\n/g, "<br>")}</div>
   </div><p class="hint">İlk satırın verisiyle önizleme.</p>`;
@@ -1863,8 +1883,11 @@ $("#bulk-test-btn").onclick = async () => {
 // --- toplu gönderim (NDJSON akışı) ---
 $("#bulk-send-btn").onclick = async () => {
   if (bulk.sending) return;
-  if (!$("#bulk-subject").value.trim() || !$("#bulk-body").value.trim()) {
-    toast("Konu ve mesaj gerekli", true); return;
+  if (!$("#bulk-subject-col").value && !$("#bulk-subject").value.trim()) {
+    toast("Konu için sütun seçin veya sabit konu girin", true); return;
+  }
+  if (!$("#bulk-body-col").value && !$("#bulk-body").value.trim()) {
+    toast("Mesaj için sütun seçin veya sabit mesaj girin", true); return;
   }
   if (!confirm(`${bulk.valid} kişiye mail gönderilecek. Devam edilsin mi?`)) return;
 
@@ -2986,7 +3009,7 @@ $("#log-btn").onclick = openSecurityLog;
 
 async function bootApp() {
   try {
-    const EXPECTED_API_VERSION = 15;
+    const EXPECTED_API_VERSION = 16;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);

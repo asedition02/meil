@@ -1424,8 +1424,10 @@ class BulkSendRequest(BaseModel):
     upload_id: str
     account_id: int
     email_column: str
-    subject: str
-    body: str
+    subject: str = ""
+    body: str = ""
+    subject_column: str = ""
+    body_column: str = ""
     is_html: bool = False
     from_name: str = ""
     delay_ms: int = 1000
@@ -1461,6 +1463,8 @@ async def bulk_upload(file: UploadFile = File(...)):
         "filename": file.filename,
         "columns": parsed["columns"],
         "guessed_email_column": email_col,
+        "guessed_subject_column": parsed.get("guessed_subject_column", ""),
+        "guessed_body_column": parsed.get("guessed_body_column", ""),
         "total": parsed["total"],
         "valid": bulkmail.valid_recipients(parsed["rows"], email_col),
         "preview": parsed["preview"],
@@ -1489,10 +1493,20 @@ def bulk_send(req: BulkSendRequest):
     account = database.get_account(req.account_id)
     if not account:
         raise HTTPException(status_code=400, detail="Gönderim hesabı bulunamadı")
-    if not req.subject.strip() or not req.body.strip():
-        raise HTTPException(status_code=400, detail="Konu ve mesaj içeriği gerekli")
     if not req.email_column:
         raise HTTPException(status_code=400, detail="E-posta sütunu seçilmedi")
+    if not req.subject_column and not req.subject.strip():
+        raise HTTPException(status_code=400, detail="Konu gerekli (sabit metin veya konu sütunu)")
+    if not req.body_column and not req.body.strip():
+        raise HTTPException(status_code=400, detail="Mesaj içeriği gerekli (sabit metin veya içerik sütunu)")
+
+    def row_subject(row: dict) -> str:
+        src = str(row.get(req.subject_column, "")) if req.subject_column else req.subject
+        return bulkmail.render_template(src, row)
+
+    def row_body(row: dict) -> str:
+        src = str(row.get(req.body_column, "")) if req.body_column else req.body
+        return bulkmail.render_template(src, row)
 
     rows = data["rows"]
     # Deneme maili: ilk satırın verisiyle tek adrese gönder
@@ -1503,8 +1517,8 @@ def bulk_send(req: BulkSendRequest):
         try:
             with email_client.BulkSender(account) as sender:
                 sender.send(req.test_to.strip(),
-                            bulkmail.render_template(req.subject, sample),
-                            bulkmail.render_template(req.body, sample),
+                            row_subject(sample),
+                            row_body(sample),
                             req.is_html, req.from_name)
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Deneme maili gönderilemedi: {e}")
@@ -1528,8 +1542,8 @@ def bulk_send(req: BulkSendRequest):
                         continue
                     try:
                         sender.send(to,
-                                    bulkmail.render_template(req.subject, row),
-                                    bulkmail.render_template(req.body, row),
+                                    row_subject(row),
+                                    row_body(row),
                                     req.is_html, req.from_name)
                         sent += 1
                         yield json.dumps({"type": "progress", "index": i, "total": total,
@@ -1555,7 +1569,7 @@ def bulk_send(req: BulkSendRequest):
 
 
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 15
+API_VERSION = 16
 
 
 @app.get("/api/status")

@@ -11,6 +11,7 @@
 import csv
 import io
 import re
+import tempfile
 import zipfile
 from xml.etree import ElementTree as ET
 
@@ -120,19 +121,46 @@ def _parse_csv(data: bytes) -> list[list[str]]:
     return [[(c or "").strip() for c in row] for row in csv.reader(io.StringIO(text), dialect)]
 
 
+def _parse_numbers(data: bytes) -> list[list[str]]:
+    try:
+        from numbers_parser import Document
+    except Exception:
+        raise ValueError("Numbers dosyası için 'numbers-parser' bağımlılığı gerekli.")
+
+    with tempfile.NamedTemporaryFile(suffix=".numbers") as tmp:
+        tmp.write(data)
+        tmp.flush()
+        doc = Document(tmp.name)
+
+    if not doc.sheets:
+        raise ValueError("Numbers dosyasında sayfa bulunamadı.")
+    sheet = doc.sheets[0]
+    if not sheet.tables:
+        raise ValueError("Numbers dosyasında tablo bulunamadı.")
+    table = sheet.tables[0]
+
+    rows = table.rows(values_only=True)
+    out: list[list[str]] = []
+    for raw in rows:
+        out.append(["" if v is None else str(v).strip() for v in raw])
+    return out
+
+
 # ---- ortak ----
 
 def parse_table(filename: str, data: bytes) -> dict:
-    """Excel/CSV içeriğini {columns, rows, total, preview, guessed_email_column} olarak döner."""
+    """Excel/CSV/Numbers içeriğini parse eder ve tahmin edilen sütunları döner."""
     name = (filename or "").lower()
     if name.endswith(".csv"):
         table = _parse_csv(data)
     elif name.endswith((".xlsx", ".xlsm")):
         table = _parse_xlsx(data)
+    elif name.endswith(".numbers"):
+        table = _parse_numbers(data)
     elif name.endswith(".xls"):
         raise ValueError("Eski .xls biçimi desteklenmiyor — dosyayı .xlsx veya .csv olarak kaydedin.")
     else:
-        raise ValueError("Desteklenmeyen dosya türü — .xlsx veya .csv yükleyin.")
+        raise ValueError("Desteklenmeyen dosya türü — .numbers, .xlsx veya .csv yükleyin.")
 
     table = [r for r in table if any(str(c).strip() for c in r)]   # tamamen boş satırları at
     if len(table) < 2:
@@ -165,6 +193,8 @@ def parse_table(filename: str, data: bytes) -> dict:
         "total": len(rows),
         "preview": rows[:PREVIEW_ROWS],
         "guessed_email_column": guess_email_column(columns, rows),
+        "guessed_subject_column": guess_subject_column(columns, rows),
+        "guessed_body_column": guess_body_column(columns, rows),
     }
 
 
@@ -178,6 +208,27 @@ def guess_email_column(columns: list[str], rows: list[dict]) -> str:
         if any(is_email(r.get(col)) for r in rows[:50]):
             return col
     return columns[0] if columns else ""
+
+
+def _guess_column(columns: list[str], rows: list[dict], pattern: str,
+                  min_non_empty: int = 3) -> str:
+    regex = re.compile(pattern, re.I)
+    for col in columns:
+        if regex.search(col):
+            return col
+    for col in columns:
+        non_empty = sum(1 for r in rows[:50] if str(r.get(col, "")).strip())
+        if non_empty >= min_non_empty:
+            return col
+    return ""
+
+
+def guess_subject_column(columns: list[str], rows: list[dict]) -> str:
+    return _guess_column(columns, rows, r"konu|subject|başlık|baslik")
+
+
+def guess_body_column(columns: list[str], rows: list[dict]) -> str:
+    return _guess_column(columns, rows, r"içerik|icerik|mesaj|body|metin")
 
 
 def valid_recipients(rows: list[dict], email_column: str) -> int:
