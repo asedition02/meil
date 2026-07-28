@@ -260,6 +260,80 @@ def _nvidia_call(system: str, messages: list[dict], schema: dict | None,
     return text
 
 
+def _nvidia_tool_call(system: str, messages: list[dict], tools: list[dict],
+                      max_tokens: int = 2048) -> dict:
+    """NVIDIA NIM ile OpenAI uyumlu tool calling yapar.
+
+    Döner:
+        {
+            "text": str,             # modelin metin yanıtı (boş olabilir)
+            "tool_call": {           # model bir araç çağırdıysa dolu, yoksa None
+                "name": str,
+                "arguments": dict
+            } | None
+        }
+    """
+    if not config.NVIDIA_API_KEY:
+        raise RuntimeError("NVIDIA_API_KEY ayarlanmalı.")
+
+    payload = {
+        "model": config.NVIDIA_MODEL,
+        "messages": [{"role": "system", "content": system}] + messages,
+        "tools": tools,
+        "tool_choice": "auto",
+        "max_tokens": max_tokens,
+        "temperature": 0.3,
+    }
+
+    url = config.NVIDIA_BASE_URL.rstrip("/") + "/chat/completions"
+    headers = {"Authorization": f"Bearer {config.NVIDIA_API_KEY}",
+               "Content-Type": "application/json"}
+    resp = requests.post(url, json=payload, headers=headers, timeout=_TIMEOUT)
+
+    if resp.status_code != 200:
+        detail = ""
+        try:
+            body = resp.json()
+            detail = (body.get("detail") or body.get("error")
+                      or body.get("message") or json.dumps(body))
+            if isinstance(detail, dict):
+                detail = detail.get("message") or json.dumps(detail)
+        except ValueError:
+            detail = resp.text[:200]
+        raise RuntimeError(
+            f"NVIDIA tool call API hatası ({resp.status_code}): {str(detail)[:300]}"
+        )
+
+    data = resp.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError("NVIDIA tool call boş yanıt döndü.")
+
+    msg = choices[0].get("message") or {}
+    text = (msg.get("content") or "").strip()
+    tool_calls = msg.get("tool_calls") or []
+
+    if not tool_calls:
+        return {"text": text, "tool_call": None}
+
+    # İlk tool call'u al (paralel çağırılarda da tekili desteklemek yeterli)
+    tc = tool_calls[0]
+    fn = tc.get("function") or {}
+    name = fn.get("name", "")
+    arguments_raw = fn.get("arguments", "{}")
+    try:
+        arguments = (
+            json.loads(arguments_raw)
+            if isinstance(arguments_raw, str)
+            else arguments_raw
+        )
+    except json.JSONDecodeError:
+        log.warning("Tool call argümanları JSON değil: %s", arguments_raw)
+        arguments = {}
+
+    return {"text": text, "tool_call": {"name": name, "arguments": arguments}}
+
+
 def _claude_call(system: str, messages: list[dict], schema: dict | None,
                  max_tokens: int) -> str:
     kwargs = {

@@ -1372,7 +1372,7 @@ def donna_ask(req: DonnaAskRequest):
         raise HTTPException(status_code=400,
                             detail="Yapay zekâ sağlayıcısı ayarlanmadı — .env dosyasını düzenleyin")
     try:
-        return donna.ask(req.question.strip(), req.history, config.USER_NAME)
+        return donna.ask_with_tools(req.question.strip(), req.history, config.USER_NAME)
     except Exception as e:
         log.exception("Donna yanıt hatası")
         raise HTTPException(status_code=502, detail=str(e)[:300])

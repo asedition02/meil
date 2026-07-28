@@ -382,6 +382,321 @@ def ask(question: str, history: list[dict] | None = None, user_name: str = "") -
 
 
 # ---------------------------------------------------------------------------
+# NVIDIA NIM tool calling — araç tanımları ve yardımcılar
+# ---------------------------------------------------------------------------
+
+DONNA_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "draft_email_reply",
+            "description": (
+                "Kullanıcı adına bir maile gonderilmeye hazır yanıt taslağı hazırlar. "
+                "Kullanıcı onaylayana kadar gönderilmez."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_id": {
+                        "type": "integer",
+                        "description": "Yanıtlanacak mailin ID'si. Verideki [mail:ID] sayısından al.",
+                    },
+                    "reply_text": {
+                        "type": "string",
+                        "description": (
+                            "Gönderilmeye hazır tam yanıt metni: selamlama ile başla, "
+                            "kibar kapatış ve imzayla bitir. Mailin dilinde yaz "
+                            "(Türkçe mail → Türkçe yanıt, İngilizce → İngilizce). "
+                            "Emin olamadığın bilgileri [KÖŞELİ PARANTEZ] içinde bırak."
+                        ),
+                    },
+                },
+                "required": ["email_id", "reply_text"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_calendar_event",
+            "description": (
+                "Takvime yeni bir etkinlik ekler. "
+                "Kullanıcı onaylayana kadar kaydedilmez."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Etkinliğin kısa, net başlığı.",
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": (
+                            "YYYY-MM-DD formatında tarih. "
+                            "'Yarın', 'önümüzdeki salı' gibi göreli ifadeleri "
+                            "bugünün tarihine göre kesin tarihe çevir."
+                        ),
+                    },
+                    "time": {
+                        "type": "string",
+                        "description": "HH:MM (24 saat). Tüm gün etkinlikse boş bırak.",
+                    },
+                    "duration_minutes": {
+                        "type": "integer",
+                        "description": "Etkinlik süresi dakika cinsinden. Belirtilmemişse 60.",
+                    },
+                    "location": {
+                        "type": "string",
+                        "description": "Etkinlik yeri veya çevrimiçi bağlantı. Yoksa boş bırak.",
+                    },
+                },
+                "required": ["title", "date", "duration_minutes"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_calendar_event",
+            "description": (
+                "Mevcut bir takvim etkinliğini günceller. "
+                "Kullanıcı onaylayana kadar kaydedilmez."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_id": {
+                        "type": "integer",
+                        "description": "Güncellenecek etkinliğin ID'si. Verideki [etkinlik:ID] sayısından al.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Yeni başlık. Değişmiyorsa mevcut değeri aynen yaz.",
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "Yeni tarih YYYY-MM-DD. Değişmiyorsa mevcut değeri yaz.",
+                    },
+                    "time": {
+                        "type": "string",
+                        "description": "Yeni saat HH:MM. Değişmiyorsa mevcut değeri yaz.",
+                    },
+                    "duration_minutes": {
+                        "type": "integer",
+                        "description": "Yeni süre (dakika). Değişmiyorsa mevcut değeri yaz.",
+                    },
+                    "location": {
+                        "type": "string",
+                        "description": "Yeni yer. Değişmiyorsa mevcut değeri yaz.",
+                    },
+                },
+                "required": ["event_id", "title", "date", "duration_minutes"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_calendar_event",
+            "description": (
+                "Bir takvim etkinliğini siler. "
+                "Kullanıcı onaylayana kadar silinmez."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_id": {
+                        "type": "integer",
+                        "description": "Silinecek etkinliğin ID'si. Verideki [etkinlik:ID] sayısından al.",
+                    },
+                },
+                "required": ["event_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+_TOOL_TO_ACTION = {
+    "draft_email_reply": "mail_yanitla",
+    "create_calendar_event": "etkinlik_olustur",
+    "update_calendar_event": "etkinlik_guncelle",
+    "delete_calendar_event": "etkinlik_sil",
+}
+
+_EMPTY_ACTION: dict = {
+    "type": "yok", "summary": "",
+    "email_id": 0, "reply_text": "",
+    "event_id": 0, "title": "", "date": "", "time": "",
+    "duration_minutes": 0, "location": "", "path": "",
+}
+
+
+def _tool_call_to_action(name: str, args: dict, ctx: dict) -> dict:
+    """Tool call adı + argümanları → ACTION_SCHEMA'ya uygun dict.
+
+    Context (ctx) kullananılarak ilgili mail/etkinlik meta verisi eklenir;
+    bu sayede onay kartında anlamlı bilgi gösterilebilir.
+    """
+    action_type = _TOOL_TO_ACTION.get(name, "yok")
+    action = {**_EMPTY_ACTION, "type": action_type}
+    known_emails = {m["id"]: m for m in ctx.get("attention", []) + ctx.get("related_mails", [])}
+    known_events = {e["id"]: e for e in ctx.get("events", [])}
+
+    if action_type == "mail_yanitla":
+        email_id = int(args.get("email_id") or 0)
+        reply_text = (args.get("reply_text") or "").strip()
+        if not email_id or not reply_text:
+            return {**_EMPTY_ACTION}
+        mail = known_emails.get(email_id)
+        if not mail:                        # bilinmeyen ID — güvenli değil, işlem üretme
+            return {**_EMPTY_ACTION}
+        action["email_id"] = email_id
+        action["reply_text"] = reply_text
+        action["mail_subject"] = mail.get("subject") or "(konusuz)"
+        action["mail_to"] = mail.get("sender_name") or mail.get("sender_email") or ""
+        action["summary"] = f"{action['mail_to']} kişisine yanıt gönderilecek"
+
+    elif action_type == "etkinlik_olustur":
+        title = (args.get("title") or "").strip()
+        date = (args.get("date") or "").strip()
+        if not title or not date:
+            return {**_EMPTY_ACTION}
+        action.update({
+            "title": title,
+            "date": date,
+            "time": (args.get("time") or "").strip(),
+            "duration_minutes": int(args.get("duration_minutes") or 60),
+            "location": (args.get("location") or "").strip(),
+        })
+        when = f"{action['date']} {action['time']}".strip()
+        action["summary"] = f"'{title}' etkinliği {when} olarak eklenecek"
+
+    elif action_type == "etkinlik_guncelle":
+        event_id = int(args.get("event_id") or 0)
+        if not event_id:
+            return {**_EMPTY_ACTION}
+        ev = known_events.get(event_id)
+        action["event_id"] = event_id
+        action.update({
+            "title": (args.get("title") or "").strip(),
+            "date": (args.get("date") or "").strip(),
+            "time": (args.get("time") or "").strip(),
+            "duration_minutes": int(args.get("duration_minutes") or 60),
+            "location": (args.get("location") or "").strip(),
+        })
+        if ev:
+            action["event_title"] = ev.get("title") or ""
+            action["event_when"] = (ev.get("start") or "").replace("T", " ")[:16]
+        action["summary"] = f"'{action['title'] or (ev or {}).get('title', '')}' etkinliği güncellenecek"
+
+    elif action_type == "etkinlik_sil":
+        event_id = int(args.get("event_id") or 0)
+        if not event_id:
+            return {**_EMPTY_ACTION}
+        ev = known_events.get(event_id)
+        action["event_id"] = event_id
+        if ev:
+            action["event_title"] = ev.get("title") or ""
+            action["event_when"] = (ev.get("start") or "").replace("T", " ")[:16]
+            action["summary"] = f"'{ev['title']}' etkinliği silinecek"
+        else:
+            action["summary"] = f"Etkinlik {event_id} silinecek"
+
+    else:
+        return {**_EMPTY_ACTION}
+
+    return action
+
+
+def ask_with_tools(question: str, history: list[dict] | None = None,
+                   user_name: str = "") -> dict:
+    """Donna'nın NVIDIA NIM tool calling destekli soru-cevap fonksiyonu.
+
+    Aktif sağlayıcı 'nvidia' ise modele gerçek tool calling ile istek gönderir;
+    model aksiyonu açıkça bir fonksiyon çağrısı olarak bildirir. Diğer
+    sağlayıcılarda mevcut ask() fonksiyonuna düşer.
+
+    Dönüş yapısı ask() ile aynıdır; frontend uyumluluğu korunur.
+    """
+    if ai.active_provider() != "nvidia":
+        return ask(question, history, user_name)
+
+    ctx = gather_context(question)
+    system = PERSONA
+    if user_name:
+        system += f"\n- Kullanıcının adı: {user_name}."
+    system += (
+        "\n\nGÖREV: Kullanıcının sorusunu, sana verilen mail/takvim/belge verilerine "
+        "dayanarak yanıtla. Yanıtın kısa ve net olsun; gereksiz tekrar yapma.\n"
+        "\nİŞLEM ARACLARI: Kullanıcı bir işlem istiyorsa (maile yanıt yaz, etkinlik "
+        "oluştur/güncelle/sil) ilgili aracı çağır. Ama şu kurallara dikkat et:\n"
+        "- Kullanıcı YALNIZCA soru sorduysa araç çağırma; sadece metin yanıt yaz.\n"
+        "- Araç çağırırken kısa bir metin yanıtı da yaz "
+        "(orn. 'Hazırladım, onaylarsan gönderiyorum.').\n"
+        "- Verideki [mail:ID] veya [etkinlik:ID] değerlerini doğru ID olarak kullan.\n"
+        "- Gerekli ID bulamazsan araç çağırma, kullanıcıya sor.\n"
+        "- İşlem SEN yapacaksın değil: kullanıcı onayından sonra uygulanır."
+    )
+
+    messages: list[dict] = []
+    for h in (history or [])[-6:]:
+        role = h.get("role")
+        content = (h.get("content") or "").strip()
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+    messages.append({
+        "role": "user",
+        "content": (
+            f"--- VERİLER ---\n{_context_text(ctx, with_bodies=True)}"
+            f"\n\n--- SORU ---\n{question}"
+        ),
+    })
+
+    try:
+        result = ai._nvidia_tool_call(system, messages, DONNA_TOOLS, max_tokens=2048)
+    except Exception as e:                         # noqa: BLE001
+        log.warning("Tool calling başarısız, ask()'a düşülüyor: %s", e)
+        return ask(question, history, user_name)
+
+    answer = result.get("text") or ""
+    tc = result.get("tool_call")
+    action = _tool_call_to_action(tc["name"], tc["arguments"], ctx) if tc else {**_EMPTY_ACTION}
+
+    # Kaynak mail ID'leri: aksiyon mail_yanitla ise o mail, yoksa boş
+    email_ids: list[int] = []
+    if action.get("type") == "mail_yanitla" and action.get("email_id"):
+        email_ids = [action["email_id"]]
+
+    known_emails = {m["id"]: m for m in ctx["attention"] + ctx["related_mails"]}
+    sources = [
+        {
+            "id": i,
+            "subject": known_emails[i].get("subject") or "(konusuz)",
+            "sender": (
+                known_emails[i].get("sender_name")
+                or known_emails[i].get("sender_email")
+                or ""
+            ),
+        }
+        for i in email_ids
+        if i in known_emails
+    ]
+
+    return {
+        "answer": answer,
+        "email_ids": email_ids,
+        "action": action,
+        "follow_ups": [],
+        "sources": sources,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Onaylanan işlemin uygulanması
 # ---------------------------------------------------------------------------
 
