@@ -260,6 +260,46 @@ def _nvidia_call(system: str, messages: list[dict], schema: dict | None,
     return text
 
 
+def _parse_toolcall_tag(text: str) -> dict | None:
+    """Modelin metne gömülmüş <TOOLCALL> etiketini ayrıştırır.
+
+    llama-3.3-nemotron gibi bazı NVIDIA modelleri olasılıksal örneklemede
+    tool_calls API alanı yerine aşağıdaki biçimlerden birini üretebilir::
+
+        <TOOLCALL>[{"name": "fn", "arguments": {...}}]</TOOLCALL>
+        <TOOLCALL>{"name": "fn", "arguments": {...}}</TOOLCALL>
+
+    Regex yerine string-find kullanılır; böylece argüman değerlerinde ]
+    içeren JSON'lar da doğru çözümlünebilir.
+    """
+    if not text:
+        return None
+    upper = text.upper()
+    tag_start = upper.find("<TOOLCALL>")
+    if tag_start == -1:
+        return None
+    content_start = tag_start + len("<TOOLCALL>")
+    end_tag = upper.find("</TOOLCALL>", content_start)
+    raw = text[content_start: end_tag if end_tag != -1 else len(text)].strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        log.warning("<TOOLCALL> tag içeriği JSON değil: %s", raw[:200])
+        return None
+    # Liste biçimi: [{"name":..., "arguments":...}, ...]
+    if isinstance(parsed, list):
+        parsed = parsed[0] if parsed else None
+    if not isinstance(parsed, dict):
+        return None
+    name = parsed.get("name", "")
+    arguments = parsed.get("arguments") or {}
+    if not name or not isinstance(arguments, dict):
+        return None
+    return {"name": name, "arguments": arguments}
+
+
 def _nvidia_tool_call(system: str, messages: list[dict], tools: list[dict],
                       max_tokens: int = 2048) -> dict:
     """NVIDIA NIM ile OpenAI uyumlu tool calling yapar.
@@ -314,6 +354,12 @@ def _nvidia_tool_call(system: str, messages: list[dict], tools: list[dict],
     tool_calls = msg.get("tool_calls") or []
 
     if not tool_calls:
+        # Bazı modeller (orn. llama-3.3-nemotron) tool_calls alanı yerine
+        # <TOOLCALL>[{"name":...,"arguments":...}]</TOOLCALL> biçiminde metin üretir.
+        # Bu durumda metinden tool çıkarılır.
+        tc_from_text = _parse_toolcall_tag(text)
+        if tc_from_text:
+            return {"text": "", "tool_call": tc_from_text}
         return {"text": text, "tool_call": None}
 
     # İlk tool call'u al (paralel çağırılarda da tekili desteklemek yeterli)
