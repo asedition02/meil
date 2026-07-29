@@ -130,6 +130,37 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at TEXT
 );
 
+-- Toplu mail geçmişi: her gönderim bir "kampanya", her alıcı bir satır
+CREATE TABLE IF NOT EXISTS bulk_campaigns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT DEFAULT (datetime('now')),
+    finished_at TEXT,
+    account_id INTEGER,
+    account_email TEXT,
+    filename TEXT,                 -- yüklenen liste dosyasının adı
+    subject TEXT,                  -- sabit konu ya da "(sütun: Konu)"
+    body_preview TEXT,             -- içeriğin ilk bölümü
+    is_html INTEGER DEFAULT 0,
+    is_test INTEGER DEFAULT 0,     -- deneme maili mi
+    total INTEGER DEFAULT 0,
+    sent INTEGER DEFAULT 0,
+    failed INTEGER DEFAULT 0,
+    skipped INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS bulk_recipients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER,
+    email TEXT,
+    subject TEXT,                  -- bu alıcıya giden gerçek konu
+    status TEXT,                   -- sent | failed | skipped
+    error TEXT,
+    sent_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_bulk_rcpt_campaign ON bulk_recipients(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_bulk_rcpt_email ON bulk_recipients(email);
+CREATE INDEX IF NOT EXISTS idx_bulk_camp_started ON bulk_campaigns(started_at DESC);
+
 CREATE TABLE IF NOT EXISTS auth_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT DEFAULT (datetime('now')),
@@ -311,6 +342,101 @@ def touch_session(token: str, days: int) -> bool:
 def delete_session(token: str):
     with get_db() as db:
         db.execute("DELETE FROM sessions WHERE token = ?", (token,))
+
+
+# ---- Toplu mail geçmişi ----
+
+def create_campaign(data: dict) -> int:
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO bulk_campaigns
+               (account_id, account_email, filename, subject, body_preview,
+                is_html, is_test, total)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (data.get("account_id"), data.get("account_email", ""),
+             data.get("filename", ""), data.get("subject", ""),
+             (data.get("body_preview") or "")[:400],
+             1 if data.get("is_html") else 0,
+             1 if data.get("is_test") else 0,
+             data.get("total", 0)),
+        )
+        return cur.lastrowid
+
+
+def add_bulk_recipient(campaign_id: int, email: str, subject: str,
+                       status: str, error: str = ""):
+    with get_db() as db:
+        db.execute(
+            """INSERT INTO bulk_recipients (campaign_id, email, subject, status, error)
+               VALUES (?,?,?,?,?)""",
+            (campaign_id, email[:200], (subject or "")[:300], status, (error or "")[:300]),
+        )
+
+
+def finish_campaign(campaign_id: int, sent: int, failed: int, skipped: int):
+    with get_db() as db:
+        db.execute(
+            """UPDATE bulk_campaigns
+               SET finished_at = datetime('now'), sent = ?, failed = ?, skipped = ?
+               WHERE id = ?""",
+            (sent, failed, skipped, campaign_id),
+        )
+
+
+def list_campaigns(limit: int = 50) -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT * FROM bulk_campaigns ORDER BY id DESC LIMIT ?""", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_campaign(campaign_id: int) -> dict | None:
+    with get_db() as db:
+        row = db.execute("SELECT * FROM bulk_campaigns WHERE id = ?", (campaign_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def list_campaign_recipients(campaign_id: int, limit: int = 5000) -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT email, subject, status, error, sent_at FROM bulk_recipients
+               WHERE campaign_id = ? ORDER BY id LIMIT ?""",
+            (campaign_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def search_bulk_recipients(q: str, limit: int = 200) -> list[dict]:
+    """Gönderilmiş maillerde ara: alıcı adresi veya konu."""
+    like = f"%{(q or '').strip()}%"
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT r.email, r.subject, r.status, r.error, r.sent_at,
+                      c.id AS campaign_id, c.account_email, c.filename, c.is_test
+               FROM bulk_recipients r
+               JOIN bulk_campaigns c ON c.id = r.campaign_id
+               WHERE r.email LIKE ? OR r.subject LIKE ?
+               ORDER BY r.id DESC LIMIT ?""",
+            (like, like, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def bulk_stats() -> dict:
+    with get_db() as db:
+        row = db.execute(
+            """SELECT COUNT(*) AS campaigns,
+                      COALESCE(SUM(sent), 0) AS sent,
+                      COALESCE(SUM(failed), 0) AS failed
+               FROM bulk_campaigns WHERE is_test = 0"""
+        ).fetchone()
+        uniq = db.execute(
+            "SELECT COUNT(DISTINCT email) AS n FROM bulk_recipients WHERE status = 'sent'"
+        ).fetchone()
+        out = dict(row)
+        out["unique_recipients"] = uniq["n"]
+        return out
 
 
 # ---- Giriş / güvenlik günlüğü ----

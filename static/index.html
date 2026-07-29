@@ -242,7 +242,20 @@
     <main id="view-bulk" class="view" style="display:none">
       <div class="page">
         <h2 class="page-title">Toplu Mail</h2>
-        <p class="page-desc">Excel/CSV listesindeki adreslere <b>kişiselleştirilmiş</b> mail gönderin. Kendi hesabınızın SMTP sunucusu kullanılır; <code>{sütun}</code> yer tutucularıyla her maile kişiye özel içerik yazılır.</p>
+
+        <div class="bulk-tabs">
+          <button class="bulk-tab active" data-btab="send">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 12 16-8-6 16-2.5-6.5L4 12Z"/></svg>
+            Yeni Gönderim
+          </button>
+          <button class="bulk-tab" data-btab="history">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+            Gönderim Geçmişi
+          </button>
+        </div>
+
+        <div id="bulk-pane-send">
+        <p class="page-desc">Excel/CSV/Numbers listesindeki adreslere <b>kişiselleştirilmiş</b> mail gönderin. Kendi hesabınızın SMTP sunucusu kullanılır; <code>{sütun}</code> yer tutucularıyla her maile kişiye özel içerik yazılır.</p>
 
         <!-- 1. Liste -->
         <div class="card form-card">
@@ -316,6 +329,18 @@
             <div class="bulk-stats" id="bulk-stats"></div>
             <div class="bulk-log" id="bulk-log"></div>
           </div>
+        </div>
+        </div><!-- /bulk-pane-send -->
+
+        <div id="bulk-pane-history" hidden>
+          <p class="page-desc">Bugüne kadar kime, ne zaman, hangi konuyla mail gönderdiğinizin kaydı. Adres veya konu yazarak tüm gönderimlerde arayabilirsiniz.</p>
+          <div class="bh-search">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="bh-q" placeholder="Adres veya konu ara — ör. ayse@ ya da fatura" autocomplete="off">
+            <button class="pill mini" id="bh-clear" hidden>Temizle</button>
+          </div>
+          <div id="bh-stats" class="bh-stats"></div>
+          <div id="bh-body"></div>
         </div>
       </div>
     </main>

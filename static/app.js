@@ -1957,6 +1957,141 @@ $("#bulk-send-btn").onclick = async () => {
   }
 };
 
+// ---- Toplu mail: gönderim geçmişi ----
+
+document.querySelectorAll(".bulk-tab").forEach((tab) => {
+  tab.onclick = () => {
+    document.querySelectorAll(".bulk-tab").forEach((t) => t.classList.remove("active"));
+    tab.classList.add("active");
+    const isHistory = tab.dataset.btab === "history";
+    $("#bulk-pane-send").hidden = isHistory;
+    $("#bulk-pane-history").hidden = !isHistory;
+    if (isHistory) loadBulkHistory();
+  };
+});
+
+const BH_STATUS = { sent: ["✓", "ok", "gönderildi"], failed: ["✕", "bad", "başarısız"],
+                    skipped: ["−", "muted", "atlandı"] };
+
+function bhDate(ts) {
+  if (!ts) return "";
+  try {
+    return new Date(ts.replace(" ", "T") + "Z").toLocaleString("tr-TR",
+      { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch { return ts; }
+}
+
+let bhTimer = null;
+$("#bh-q").addEventListener("input", () => {
+  clearTimeout(bhTimer);
+  $("#bh-clear").hidden = !$("#bh-q").value.trim();
+  bhTimer = setTimeout(loadBulkHistory, 280);
+});
+$("#bh-clear").onclick = () => {
+  $("#bh-q").value = ""; $("#bh-clear").hidden = true; loadBulkHistory();
+};
+
+async function loadBulkHistory() {
+  const body = $("#bh-body");
+  const q = $("#bh-q").value.trim();
+  body.innerHTML = '<p class="hint">Yükleniyor…</p>';
+  try {
+    const r = await api(`/api/bulk/history?q=${encodeURIComponent(q)}`);
+    if (r.mode === "search") { renderBhSearch(r); $("#bh-stats").innerHTML = ""; return; }
+    const st = r.stats || {};
+    $("#bh-stats").innerHTML = `
+      <span><b>${st.campaigns ?? 0}</b> gönderim</span>
+      <span><b>${st.sent ?? 0}</b> mail gönderildi</span>
+      <span><b>${st.unique_recipients ?? 0}</b> farklı alıcı</span>
+      ${st.failed ? `<span class="bad"><b>${st.failed}</b> başarısız</span>` : ""}`;
+    renderBhCampaigns(r.campaigns || []);
+  } catch (e) {
+    body.innerHTML = `<p class="auth-error">${esc(e.message)}</p>`;
+  }
+}
+
+function renderBhCampaigns(list) {
+  const body = $("#bh-body");
+  if (!list.length) {
+    body.innerHTML = '<p class="hint">Henüz toplu mail göndermediniz.</p>';
+    return;
+  }
+  body.innerHTML = list.map((c) => `
+    <div class="bh-camp" data-cid="${c.id}">
+      <div class="bh-camp-head" role="button" tabindex="0">
+        <div class="bh-camp-main">
+          <div class="bh-camp-subj">${esc(c.subject || "(konusuz)")}
+            ${c.is_test ? '<span class="badge">deneme</span>' : ""}</div>
+          <div class="bh-camp-meta">
+            ${esc(bhDate(c.started_at))} · ${esc(c.account_email || "")}
+            ${c.filename ? " · " + esc(c.filename) : ""}
+          </div>
+        </div>
+        <div class="bh-camp-nums">
+          <span class="ok">${c.sent} ✓</span>
+          ${c.failed ? `<span class="bad">${c.failed} ✕</span>` : ""}
+          ${c.skipped ? `<span class="muted">${c.skipped} −</span>` : ""}
+        </div>
+        <span class="bh-caret">⌄</span>
+      </div>
+      <div class="bh-camp-body"></div>
+    </div>`).join("");
+
+  body.querySelectorAll(".bh-camp-head").forEach((head) => {
+    const toggle = async () => {
+      const card = head.parentElement;
+      const open = card.classList.toggle("open");
+      const target = card.querySelector(".bh-camp-body");
+      if (open && !target.dataset.loaded) {
+        target.innerHTML = '<p class="hint">Alıcılar yükleniyor…</p>';
+        try {
+          const d = await api(`/api/bulk/history/${card.dataset.cid}`);
+          target.innerHTML = bhRecipientRows(d.recipients || []);
+          target.dataset.loaded = "1";
+        } catch (e) {
+          target.innerHTML = `<p class="auth-error">${esc(e.message)}</p>`;
+        }
+      }
+    };
+    head.onclick = toggle;
+    head.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
+  });
+}
+
+function bhRecipientRows(list) {
+  if (!list.length) return '<p class="hint">Alıcı kaydı yok.</p>';
+  return `<div class="bh-rcpts">${list.map((r) => {
+    const [ico, cls] = BH_STATUS[r.status] || ["•", "muted"];
+    return `<div class="bh-rcpt ${cls}">
+      <span class="bh-ico">${ico}</span>
+      <span class="bh-mail">${esc(r.email)}</span>
+      <span class="bh-subj">${esc(r.subject || "")}</span>
+      <span class="bh-time">${esc(bhDate(r.sent_at))}</span>
+      ${r.error ? `<span class="bh-err" title="${esc(r.error)}">${esc(r.error.slice(0, 42))}</span>` : ""}
+    </div>`;
+  }).join("")}</div>`;
+}
+
+function renderBhSearch(r) {
+  const body = $("#bh-body");
+  const list = r.results || [];
+  if (!list.length) {
+    body.innerHTML = `<p class="hint">"${esc(r.query)}" için kayıt bulunamadı.</p>`;
+    return;
+  }
+  body.innerHTML = `<p class="hint">"${esc(r.query)}" için <b>${list.length}</b> kayıt:</p>
+    <div class="bh-rcpts search">${list.map((x) => {
+      const [ico, cls, label] = BH_STATUS[x.status] || ["•", "muted", x.status];
+      return `<div class="bh-rcpt ${cls}">
+        <span class="bh-ico" title="${esc(label)}">${ico}</span>
+        <span class="bh-mail">${esc(x.email)}</span>
+        <span class="bh-subj">${esc(x.subject || "")}</span>
+        <span class="bh-time">${esc(bhDate(x.sent_at))}</span>
+        <span class="bh-from">${esc(x.account_email || "")}${x.is_test ? " · deneme" : ""}</span>
+      </div>`;
+    }).join("")}</div>`;
+}
+
 // ---- Hesaplar ----
 
 const PROVIDER_HINTS = {
@@ -3009,7 +3144,7 @@ $("#log-btn").onclick = openSecurityLog;
 
 async function bootApp() {
   try {
-    const EXPECTED_API_VERSION = 16;
+    const EXPECTED_API_VERSION = 17;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);

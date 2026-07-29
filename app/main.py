@@ -1509,47 +1509,79 @@ def bulk_send(req: BulkSendRequest):
         return bulkmail.render_template(src, row)
 
     rows = data["rows"]
+    subject_label = f"(sütun: {req.subject_column})" if req.subject_column else req.subject
+
+    def _campaign(total: int, is_test: bool) -> int | None:
+        """Geçmiş kaydını açar; kayıt hatası gönderimi engellemesin."""
+        try:
+            return database.create_campaign({
+                "account_id": account["id"], "account_email": account["email"],
+                "filename": data.get("filename", ""), "subject": subject_label,
+                "body_preview": (f"(sütun: {req.body_column})" if req.body_column else req.body),
+                "is_html": req.is_html, "is_test": is_test, "total": total,
+            })
+        except Exception:
+            log.exception("Toplu mail geçmişi açılamadı")
+            return None
+
     # Deneme maili: ilk satırın verisiyle tek adrese gönder
     if req.test_to.strip():
         if not bulkmail.is_email(req.test_to):
             raise HTTPException(status_code=400, detail="Deneme adresi geçersiz")
         sample = rows[0] if rows else {}
+        to = req.test_to.strip()
+        subj = row_subject(sample)
+        cid = _campaign(1, True)
         try:
             with email_client.BulkSender(account) as sender:
-                sender.send(req.test_to.strip(),
-                            row_subject(sample),
-                            row_body(sample),
-                            req.is_html, req.from_name)
+                sender.send(to, subj, row_body(sample), req.is_html, req.from_name)
         except Exception as e:
+            if cid:
+                database.add_bulk_recipient(cid, to, subj, "failed", str(e))
+                database.finish_campaign(cid, 0, 1, 0)
             raise HTTPException(status_code=502, detail=f"Deneme maili gönderilemedi: {e}")
-        return {"ok": True, "test": True, "to": req.test_to.strip()}
+        if cid:
+            database.add_bulk_recipient(cid, to, subj, "sent")
+            database.finish_campaign(cid, 1, 0, 0)
+        return {"ok": True, "test": True, "to": to}
 
     delay = max(BULK_MIN_DELAY_MS, int(req.delay_ms or 0)) / 1000.0
 
     def stream():
         sent = failed = skipped = 0
         total = len(rows)
-        yield json.dumps({"type": "start", "total": total}) + "\n"
+        cid = _campaign(total, False)
+        yield json.dumps({"type": "start", "total": total, "campaign_id": cid}) + "\n"
+
+        def record(email: str, subject: str, status: str, error: str = ""):
+            if not cid:
+                return
+            try:
+                database.add_bulk_recipient(cid, email, subject, status, error)
+            except Exception:
+                log.exception("Alıcı kaydı yazılamadı")
+
         try:
             with email_client.BulkSender(account) as sender:
                 for i, row in enumerate(rows):
                     to = str(row.get(req.email_column, "")).strip()
                     if not bulkmail.is_email(to):
                         skipped += 1
+                        record(to or "(boş)", "", "skipped", "Geçersiz e-posta")
                         yield json.dumps({"type": "progress", "index": i, "total": total,
                                           "email": to or "(boş)", "status": "skipped",
                                           "error": "Geçersiz e-posta"}) + "\n"
                         continue
+                    subj = row_subject(row)
                     try:
-                        sender.send(to,
-                                    row_subject(row),
-                                    row_body(row),
-                                    req.is_html, req.from_name)
+                        sender.send(to, subj, row_body(row), req.is_html, req.from_name)
                         sent += 1
+                        record(to, subj, "sent")
                         yield json.dumps({"type": "progress", "index": i, "total": total,
                                           "email": to, "status": "sent"}) + "\n"
                     except Exception as e:
                         failed += 1
+                        record(to, subj, "failed", str(e))
                         yield json.dumps({"type": "progress", "index": i, "total": total,
                                           "email": to, "status": "failed",
                                           "error": str(e)[:200]}) + "\n"
@@ -1558,6 +1590,11 @@ def bulk_send(req: BulkSendRequest):
         except Exception as e:      # bağlantı/kimlik hatası — akışı hatayla bitir
             log.exception("Toplu gönderim hatası")
             yield json.dumps({"type": "error", "error": str(e)[:300]}) + "\n"
+        if cid:
+            try:
+                database.finish_campaign(cid, sent, failed, skipped)
+            except Exception:
+                log.exception("Kampanya kapatılamadı")
         log.info("Toplu gönderim: hesap=%s gönderilen=%d başarısız=%d atlanan=%d",
                  account["email"], sent, failed, skipped)
         yield json.dumps({"type": "done", "total": total, "sent": sent,
@@ -1568,8 +1605,27 @@ def bulk_send(req: BulkSendRequest):
                                       "X-Accel-Buffering": "no"})
 
 
+@app.get("/api/bulk/history")
+def bulk_history(q: str = "", limit: int = 50):
+    """Gönderim geçmişi. `q` verilirse alıcı adresi/konu içinde arar."""
+    if q.strip():
+        return {"mode": "search", "query": q.strip(),
+                "results": database.search_bulk_recipients(q.strip(), min(limit, 500))}
+    return {"mode": "campaigns", "campaigns": database.list_campaigns(min(limit, 200)),
+            "stats": database.bulk_stats()}
+
+
+@app.get("/api/bulk/history/{campaign_id}")
+def bulk_history_detail(campaign_id: int):
+    """Bir gönderimin tüm alıcıları."""
+    camp = database.get_campaign(campaign_id)
+    if not camp:
+        raise HTTPException(status_code=404, detail="Gönderim kaydı bulunamadı")
+    return {"campaign": camp, "recipients": database.list_campaign_recipients(campaign_id)}
+
+
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 16
+API_VERSION = 17
 
 
 @app.get("/api/status")
