@@ -66,6 +66,8 @@ const MI = {
   sun: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
   x: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg>',
   thread: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2Z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>',
+  mail: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 8 9 6 9-6"/></svg>',
+  check: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m5 12 5 5 9-9"/></svg>',
 };
 
 function toast(msg, isError = false) {
@@ -191,7 +193,7 @@ document.querySelectorAll(".rail-btn").forEach((btn) => {
     document.querySelectorAll(".rail-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     const view = btn.dataset.view;
-    ["inbox", "calendar", "dataroom", "bulk", "accounts"].forEach((v) => {
+    ["inbox", "calendar", "dataroom", "bulk", "tasks", "accounts"].forEach((v) => {
       const elem = $(`#view-${v}`);
       if (!elem) { console.error(`View element not found: #view-${v}`); return; }
       elem.style.display = v === view ? "flex" : "none";
@@ -199,6 +201,7 @@ document.querySelectorAll(".rail-btn").forEach((btn) => {
     if (view === "calendar") loadCalendar();
     if (view === "dataroom") loadDataroom();
     if (view === "bulk") loadBulk();
+    if (view === "tasks") loadTasks();
     if (view === "accounts") loadAccounts();
   };
 });
@@ -3140,11 +3143,288 @@ $("#log-btn").onclick = openSecurityLog;
   };
 })();
 
+// ---- Görevler ----
+
+const TASK_PRIORITY_LABEL = { dusuk: "Düşük", orta: "Orta", yuksek: "Yüksek", acil: "Acil" };
+const TASK_STATUS_LABEL = {
+  yapilacak: "Yapılacak", devam_ediyor: "Devam Ediyor",
+  tamamlandi: "Tamamlandı", iptal: "İptal",
+};
+const TASK_STATUS_ORDER = ["yapilacak", "devam_ediyor", "tamamlandi", "iptal"];
+
+let tasksState = { items: [], counts: {}, tags: [], status: "", priority: "", q: "" };
+
+async function loadTasks() {
+  const params = new URLSearchParams();
+  if (tasksState.status) params.set("status", tasksState.status);
+  if (tasksState.priority) params.set("priority", tasksState.priority);
+  if (tasksState.q) params.set("q", tasksState.q);
+  try {
+    const data = await api(`/api/tasks?${params}`);
+    tasksState.items = data.tasks;
+    tasksState.counts = data.counts;
+    tasksState.tags = data.tags;
+    renderTaskChips();
+    renderTaskList();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function renderTaskChips() {
+  const holder = $("#task-status-chips");
+  const total = Object.values(tasksState.counts).reduce((a, b) => a + b, 0);
+  const chips = [["", "Tümü", total]].concat(
+    TASK_STATUS_ORDER.map((s) => [s, TASK_STATUS_LABEL[s], tasksState.counts[s] || 0])
+  );
+  holder.innerHTML = chips
+    .map(([val, label, n]) => `<button class="chip${tasksState.status === val ? " active" : ""}" data-tstatus="${val}">${label}${n ? ` <span class="vn">${n}</span>` : ""}</button>`)
+    .join("");
+  holder.querySelectorAll("[data-tstatus]").forEach((btn) => {
+    btn.onclick = () => { tasksState.status = btn.dataset.tstatus; loadTasks(); };
+  });
+}
+
+function taskDueBadge(due) {
+  if (!due) return "";
+  let cls = "", label = due;
+  try {
+    const d = new Date(`${due}T00:00:00`);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((d - today) / 86400000);
+    label = d.toLocaleDateString("tr-TR", { day: "2-digit", month: "short" });
+    if (diffDays < 0) cls = " tk-overdue";
+    else if (diffDays === 0) cls = " tk-today";
+  } catch { /* ham metni göster */ }
+  return `<span class="tk-due${cls}">${MI.calendar} ${label}</span>`;
+}
+
+function taskCardHtml(t) {
+  const done = t.status === "tamamlandi";
+  const cancelled = t.status === "iptal";
+  const tags = (t.tags || "").split(",").map((x) => x.trim()).filter(Boolean);
+  const links = [];
+  if (t.related_email_id) links.push(`<span class="tk-link">${MI.mail} ${esc(t.related_email_subject || "Mail")}</span>`);
+  if (t.related_file_path) links.push(`<span class="tk-link">${MI.paperclip} ${esc(t.related_file_path.split("/").pop())}</span>`);
+  if (t.related_event_id) links.push(`<span class="tk-link">${MI.calendar} ${esc(t.related_event_title || "Etkinlik")}</span>`);
+  return `
+    <div class="task-card${done ? " tk-done" : ""}${cancelled ? " tk-cancelled" : ""}" data-topen="${t.id}">
+      <button type="button" class="tk-checkbox${done ? " checked" : ""}" data-tcheck="${t.id}" data-tdone="${done ? 0 : 1}" title="${done ? "Tamamlanmadı olarak işaretle" : "Tamamlandı olarak işaretle"}">${done ? MI.check : ""}</button>
+      <div class="tk-body">
+        <div class="tk-title-row">
+          <span class="tk-title">${esc(t.title)}</span>
+          <span class="tk-priority tk-pri-${t.priority}">${TASK_PRIORITY_LABEL[t.priority] || t.priority}</span>
+        </div>
+        ${t.description ? `<div class="tk-desc">${esc(t.description)}</div>` : ""}
+        <div class="tk-meta-row">
+          ${taskDueBadge(t.due_date)}
+          ${t.assignee ? `<span class="tk-assignee">${esc(t.assignee)}</span>` : ""}
+          ${tags.map((tag) => `<span class="tk-tag">${esc(tag)}</span>`).join("")}
+          ${links.join("")}
+        </div>
+      </div>
+      <button type="button" class="icon-btn tk-delete" data-tdelete="${t.id}" title="Sil">${MI.x}</button>
+    </div>`;
+}
+
+function renderTaskList() {
+  const holder = $("#task-list");
+  if (!tasksState.items.length) {
+    holder.innerHTML = `<div class="placeholder"><p>Görev bulunamadı. "Yeni Görev" ile ekleyin.</p></div>`;
+    return;
+  }
+  holder.innerHTML = tasksState.items.map(taskCardHtml).join("");
+  holder.querySelectorAll("[data-tcheck]").forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      toggleTaskDone(Number(btn.dataset.tcheck), btn.dataset.tdone === "1");
+    };
+  });
+  holder.querySelectorAll("[data-topen]").forEach((card) => {
+    card.onclick = () => {
+      const t = tasksState.items.find((x) => x.id === Number(card.dataset.topen));
+      if (t) openTaskModal(t);
+    };
+  });
+  holder.querySelectorAll("[data-tdelete]").forEach((btn) => {
+    btn.onclick = (e) => { e.stopPropagation(); deleteTask(Number(btn.dataset.tdelete)); };
+  });
+}
+
+async function toggleTaskDone(id, done) {
+  try {
+    await api(`/api/tasks/${id}/complete`, { method: "POST", body: JSON.stringify({ done }) });
+    loadTasks();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function deleteTask(id) {
+  if (!confirm("Bu görevi silmek istediğinize emin misiniz?")) return;
+  try {
+    await api(`/api/tasks/${id}`, { method: "DELETE" });
+    toast("Görev silindi");
+    loadTasks();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function openTaskModal(task) {
+  const editing = !!task;
+  const link = {
+    email_id: task?.related_email_id || null,
+    email_label: task?.related_email_id ? (task.related_email_subject || "Mail") : "",
+    file_path: task?.related_file_path || "",
+    file_label: task?.related_file_path ? task.related_file_path.split("/").pop() : "",
+    event_id: task?.related_event_id || null,
+    event_label: task?.related_event_id ? (task.related_event_title || "Etkinlik") : "",
+  };
+  openModal(`
+    <h3>${editing ? "Görevi Düzenle" : "Yeni Görev"}</h3>
+    <div class="form-col">
+      <input id="tk-title" placeholder="Görev başlığı" value="${esc(task?.title || "")}">
+      <textarea id="tk-desc" placeholder="Açıklama (isteğe bağlı)" rows="3">${esc(task?.description || "")}</textarea>
+      <div class="form-row">
+        <input id="tk-due" type="date" value="${task?.due_date || ""}" title="Son tarih">
+        <select id="tk-priority" title="Öncelik">
+          <option value="dusuk" ${task?.priority === "dusuk" ? "selected" : ""}>Düşük öncelik</option>
+          <option value="orta" ${!task || task?.priority === "orta" ? "selected" : ""}>Orta öncelik</option>
+          <option value="yuksek" ${task?.priority === "yuksek" ? "selected" : ""}>Yüksek öncelik</option>
+          <option value="acil" ${task?.priority === "acil" ? "selected" : ""}>Acil</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <select id="tk-status" title="Durum">
+          <option value="yapilacak" ${!task || task?.status === "yapilacak" ? "selected" : ""}>Yapılacak</option>
+          <option value="devam_ediyor" ${task?.status === "devam_ediyor" ? "selected" : ""}>Devam Ediyor</option>
+          <option value="tamamlandi" ${task?.status === "tamamlandi" ? "selected" : ""}>Tamamlandı</option>
+          <option value="iptal" ${task?.status === "iptal" ? "selected" : ""}>İptal</option>
+        </select>
+        <input id="tk-assignee" placeholder="İlgili kişi (ad veya e-posta)" value="${esc(task?.assignee || "")}">
+      </div>
+      <input id="tk-tags" placeholder="Etiketler (virgülle ayırın)" value="${esc(task?.tags || "")}">
+      <div class="tk-link-section">
+        <div class="tk-link-label">İlişkilendir (isteğe bağlı)</div>
+        <div class="tk-link-chips" id="tk-link-chips"></div>
+        <input id="tk-link-q" placeholder="Mail, belge veya etkinlik ara…" autocomplete="off">
+        <div id="tk-link-results" class="tk-link-results"></div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
+      <button class="pill accent" id="tk-save-btn">${editing ? "Kaydet" : "Görevi Oluştur"}</button>
+    </div>`);
+
+  function renderLinkChips() {
+    const holder = $("#tk-link-chips");
+    if (!holder) return;
+    const chips = [];
+    if (link.email_id) chips.push(`<span class="tk-chip">${MI.mail} ${esc(link.email_label)}<button type="button" data-unlink="email">${MI.x}</button></span>`);
+    if (link.file_path) chips.push(`<span class="tk-chip">${MI.paperclip} ${esc(link.file_label)}<button type="button" data-unlink="file">${MI.x}</button></span>`);
+    if (link.event_id) chips.push(`<span class="tk-chip">${MI.calendar} ${esc(link.event_label)}<button type="button" data-unlink="event">${MI.x}</button></span>`);
+    holder.innerHTML = chips.join("");
+    holder.querySelectorAll("[data-unlink]").forEach((btn) => {
+      btn.onclick = () => {
+        const type = btn.dataset.unlink;
+        if (type === "email") { link.email_id = null; link.email_label = ""; }
+        if (type === "file") { link.file_path = ""; link.file_label = ""; }
+        if (type === "event") { link.event_id = null; link.event_label = ""; }
+        renderLinkChips();
+      };
+    });
+  }
+  renderLinkChips();
+
+  function renderLinkResults(res) {
+    const holder = $("#tk-link-results");
+    if (!holder) return;
+    const parts = [];
+    if (res.emails?.length) {
+      parts.push(`<div class="tk-link-group"><div class="tk-link-group-title">Mailler</div>${res.emails.map((e) => `<button type="button" class="tk-link-item" data-pick="email" data-id="${e.id}" data-label="${esc(e.subject || "(konu yok)")}">${esc(e.subject || "(konu yok)")} <span class="tk-link-sub">${esc(e.sender || "")}</span></button>`).join("")}</div>`);
+    }
+    if (res.files?.length) {
+      parts.push(`<div class="tk-link-group"><div class="tk-link-group-title">Belgeler</div>${res.files.map((f) => `<button type="button" class="tk-link-item" data-pick="file" data-id="${esc(f.path)}" data-label="${esc(f.path.split("/").pop())}">${esc(f.path.split("/").pop())}</button>`).join("")}</div>`);
+    }
+    if (res.events?.length) {
+      parts.push(`<div class="tk-link-group"><div class="tk-link-group-title">Etkinlikler</div>${res.events.map((ev) => `<button type="button" class="tk-link-item" data-pick="event" data-id="${ev.id}" data-label="${esc(ev.title || "(başlıksız)")}">${esc(ev.title || "(başlıksız)")}</button>`).join("")}</div>`);
+    }
+    holder.innerHTML = parts.join("") || `<div class="tk-link-empty">Sonuç yok</div>`;
+    holder.querySelectorAll("[data-pick]").forEach((btn) => {
+      btn.onclick = () => {
+        const type = btn.dataset.pick;
+        if (type === "email") { link.email_id = Number(btn.dataset.id); link.email_label = btn.dataset.label; }
+        if (type === "file") { link.file_path = btn.dataset.id; link.file_label = btn.dataset.label; }
+        if (type === "event") { link.event_id = Number(btn.dataset.id); link.event_label = btn.dataset.label; }
+        $("#tk-link-q").value = "";
+        holder.innerHTML = "";
+        renderLinkChips();
+      };
+    });
+  }
+
+  let linkSearchTimer;
+  $("#tk-link-q").oninput = (e) => {
+    clearTimeout(linkSearchTimer);
+    const q = e.target.value.trim();
+    if (q.length < 2) { $("#tk-link-results").innerHTML = ""; return; }
+    linkSearchTimer = setTimeout(async () => {
+      try {
+        const res = await api(`/api/search?q=${encodeURIComponent(q)}`);
+        renderLinkResults(res);
+      } catch { /* yoksay */ }
+    }, 300);
+  };
+
+  $("#tk-save-btn").onclick = async () => {
+    const title = $("#tk-title").value.trim();
+    if (!title) return toast("Görev başlığı gerekli", true);
+    const body = {
+      title,
+      description: $("#tk-desc").value.trim(),
+      due_date: $("#tk-due").value,
+      priority: $("#tk-priority").value,
+      status: $("#tk-status").value,
+      tags: $("#tk-tags").value.trim(),
+      assignee: $("#tk-assignee").value.trim(),
+      related_email_id: link.email_id,
+      related_file_path: link.file_path,
+      related_event_id: link.event_id,
+    };
+    const btn = $("#tk-save-btn");
+    btn.disabled = true;
+    try {
+      if (editing) {
+        await api(`/api/tasks/${task.id}`, { method: "PUT", body: JSON.stringify(body) });
+        toast("Görev güncellendi");
+      } else {
+        await api("/api/tasks", { method: "POST", body: JSON.stringify(body) });
+        toast("Görev oluşturuldu");
+      }
+      closeModal();
+      loadTasks();
+    } catch (err) {
+      toast(err.message, true);
+      btn.disabled = false;
+    }
+  };
+}
+
+$("#task-new-btn").onclick = () => openTaskModal(null);
+$("#task-priority-filter").onchange = (e) => { tasksState.priority = e.target.value; loadTasks(); };
+let taskSearchTimer;
+$("#task-q").oninput = (e) => {
+  clearTimeout(taskSearchTimer);
+  const val = e.target.value;
+  taskSearchTimer = setTimeout(() => { tasksState.q = val.trim(); loadTasks(); }, 300);
+};
+
 // ---- Başlatma ----
 
 async function bootApp() {
   try {
-    const EXPECTED_API_VERSION = 17;
+    const EXPECTED_API_VERSION = 18;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);

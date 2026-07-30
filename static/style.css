@@ -1877,3 +1877,108 @@ table.dataroom input[type="checkbox"] { width: 15px; height: 15px; accent-color:
   .bh-rcpt, .bh-rcpts.search .bh-rcpt { grid-template-columns: 16px 1fr auto; }
   .bh-subj, .bh-from { display: none; }
 }
+
+/* ---- Görevler (Tasks) ---- */
+
+.tasks-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 6px; }
+.tasks-toolbar {
+  display: flex; justify-content: space-between; align-items: center; gap: 14px;
+  flex-wrap: wrap; margin-bottom: 18px;
+}
+.tasks-status-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.tasks-status-chips .chip .vn { opacity: 0.7; font-weight: 500; margin-left: 3px; }
+.tasks-filters { display: flex; align-items: center; gap: 10px; }
+.tasks-search { position: relative; display: flex; align-items: center; }
+.tasks-search svg { position: absolute; left: 12px; color: var(--muted); pointer-events: none; }
+.tasks-search input {
+  width: 240px; padding: 8px 12px 8px 34px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--panel); color: var(--text);
+  font-size: 13px; font-family: inherit;
+}
+.tasks-search input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+.task-list { display: flex; flex-direction: column; gap: 10px; }
+
+.task-card {
+  display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel);
+  cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.task-card:hover { border-color: var(--accent); box-shadow: var(--shadow); }
+.task-card.tk-done { opacity: 0.62; }
+.task-card.tk-done .tk-title { text-decoration: line-through; }
+.task-card.tk-cancelled { opacity: 0.5; }
+.task-card.tk-cancelled .tk-title { text-decoration: line-through; }
+
+.tk-checkbox {
+  flex-shrink: 0; width: 21px; height: 21px; margin-top: 2px; border-radius: 50%;
+  border: 1.6px solid var(--border); background: var(--panel); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; color: #fff;
+  padding: 0; transition: all 0.15s;
+}
+.tk-checkbox:hover { border-color: var(--accent); }
+.tk-checkbox.checked { background: var(--green); border-color: var(--green); }
+
+.tk-body { flex: 1; min-width: 0; }
+.tk-title-row { display: flex; align-items: center; gap: 10px; }
+.tk-title { font-weight: 650; font-size: 14.5px; }
+.tk-priority {
+  flex-shrink: 0; margin-left: auto; font-size: 10.5px; font-weight: 700;
+  padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.02em;
+}
+.tk-pri-dusuk { background: var(--panel-2); color: var(--muted); }
+.tk-pri-orta { background: var(--accent-soft); color: var(--accent-text); }
+.tk-pri-yuksek { background: var(--amber-soft); color: var(--amber); }
+.tk-pri-acil { background: var(--red-soft); color: var(--red); }
+
+.tk-desc {
+  color: var(--muted); font-size: 12.5px; margin-top: 4px; line-height: 1.45;
+  overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.tk-meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.tk-due, .tk-assignee, .tk-tag, .tk-link {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px;
+  padding: 3px 8px; border-radius: 6px; background: var(--panel-2); color: var(--muted);
+}
+.tk-due.tk-today { background: var(--amber-soft); color: var(--amber); }
+.tk-due.tk-overdue { background: var(--red-soft); color: var(--red); }
+.tk-assignee { background: var(--accent-soft); color: var(--accent-text); }
+.tk-tag { background: var(--panel-2); }
+.tk-link { background: var(--panel-2); }
+
+.tk-delete { flex-shrink: 0; opacity: 0; transition: opacity 0.15s; }
+.task-card:hover .tk-delete { opacity: 1; }
+.tk-delete:hover { color: var(--red); }
+
+/* Görev oluşturma/düzenleme modalı — ilişkilendirme */
+.tk-link-section { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--border); }
+.tk-link-label { font-size: 12px; font-weight: 650; color: var(--muted); margin-bottom: 8px; }
+.tk-link-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.tk-chip {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  padding: 4px 6px 4px 10px; border-radius: 999px; background: var(--accent-soft);
+  color: var(--accent-text); font-weight: 600;
+}
+.tk-chip button {
+  display: flex; align-items: center; justify-content: center; border: none;
+  background: transparent; color: inherit; cursor: pointer; opacity: 0.7; padding: 2px;
+}
+.tk-chip button:hover { opacity: 1; }
+.tk-link-results {
+  max-height: 220px; overflow-y: auto; margin-top: 6px; display: flex;
+  flex-direction: column; gap: 8px;
+}
+.tk-link-group-title {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); margin-bottom: 4px;
+}
+.tk-link-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--panel); color: var(--text); font-size: 12.5px; font-family: inherit;
+  cursor: pointer; margin-bottom: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tk-link-item:hover { border-color: var(--accent); background: var(--accent-soft); }
+.tk-link-sub { color: var(--muted); font-size: 11px; margin-left: auto; flex-shrink: 0; }
+.tk-link-empty { color: var(--muted); font-size: 12px; padding: 6px 0; }

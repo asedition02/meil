@@ -113,6 +113,23 @@ class AddToCalendarRequest(BaseModel):
     duration_minutes: int = 0
 
 
+class TaskRequest(BaseModel):
+    title: str
+    description: str = ""
+    due_date: str = ""             # YYYY-MM-DD; boşsa tarihsiz
+    priority: str = "orta"         # dusuk | orta | yuksek | acil
+    status: str = "yapilacak"      # yapilacak | devam_ediyor | tamamlandi | iptal
+    tags: str = ""                 # virgülle ayrılmış
+    assignee: str = ""             # ilgili kişi
+    related_email_id: int | None = None
+    related_file_path: str = ""
+    related_event_id: int | None = None
+
+
+class TaskCompleteRequest(BaseModel):
+    done: bool = True
+
+
 class AccountRequest(BaseModel):
     display_name: str = ""
     email: str
@@ -887,6 +904,67 @@ def remove_event(event_id: int):
     return {"ok": True}
 
 
+# ---- Görevler (Tasks) ----
+
+def _validate_task_fields(req: "TaskRequest"):
+    if not req.title.strip():
+        raise HTTPException(status_code=400, detail="Görev başlığı gerekli")
+    if req.priority not in database.TASK_PRIORITIES:
+        raise HTTPException(status_code=400, detail="Geçersiz öncelik")
+    if req.status not in database.TASK_STATUSES:
+        raise HTTPException(status_code=400, detail="Geçersiz durum")
+
+
+@app.get("/api/tasks")
+def list_tasks(status: str = "", priority: str = "", tag: str = "", q: str = ""):
+    return {
+        "tasks": database.list_tasks(status=status or None, priority=priority or None,
+                                     tag=tag or None, q=q),
+        "counts": database.task_counts(),
+        "tags": database.task_tags(),
+    }
+
+
+@app.post("/api/tasks")
+def create_task(req: TaskRequest):
+    _validate_task_fields(req)
+    task_id = database.create_task(req.model_dump())
+    return {"ok": True, "task": database.get_task(task_id)}
+
+
+@app.get("/api/tasks/{task_id}")
+def get_task(task_id: int):
+    task = database.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Görev bulunamadı")
+    return {"task": task}
+
+
+@app.put("/api/tasks/{task_id}")
+def edit_task(task_id: int, req: TaskRequest):
+    if not database.get_task(task_id):
+        raise HTTPException(status_code=404, detail="Görev bulunamadı")
+    _validate_task_fields(req)
+    database.update_task(task_id, **req.model_dump())
+    return {"ok": True, "task": database.get_task(task_id)}
+
+
+@app.post("/api/tasks/{task_id}/complete")
+def toggle_task_complete(task_id: int, req: TaskCompleteRequest):
+    if not database.get_task(task_id):
+        raise HTTPException(status_code=404, detail="Görev bulunamadı")
+    database.complete_task(task_id, req.done)
+    return {"ok": True, "task": database.get_task(task_id)}
+
+
+@app.delete("/api/tasks/{task_id}")
+def remove_task(task_id: int):
+    if not database.get_task(task_id):
+        raise HTTPException(status_code=404, detail="Görev bulunamadı")
+    database.delete_task(task_id)
+    return {"ok": True}
+
+
 @app.post("/api/emails/{email_id}/add-to-calendar")
 def add_email_event(email_id: int, req: AddToCalendarRequest):
     """Mailde tespit edilen etkinliği takvime ekler."""
@@ -1625,7 +1703,7 @@ def bulk_history_detail(campaign_id: int):
 
 
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 17
+API_VERSION = 18
 
 
 @app.get("/api/status")

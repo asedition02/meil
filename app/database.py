@@ -161,6 +161,26 @@ CREATE INDEX IF NOT EXISTS idx_bulk_rcpt_campaign ON bulk_recipients(campaign_id
 CREATE INDEX IF NOT EXISTS idx_bulk_rcpt_email ON bulk_recipients(email);
 CREATE INDEX IF NOT EXISTS idx_bulk_camp_started ON bulk_campaigns(started_at DESC);
 
+-- Görevler
+CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    due_date TEXT,                   -- YYYY-MM-DD (boş olabilir)
+    priority TEXT DEFAULT 'orta',    -- dusuk | orta | yuksek | acil
+    status TEXT DEFAULT 'yapilacak', -- yapilacak | devam_ediyor | tamamlandi | iptal
+    tags TEXT DEFAULT '',            -- virgülle ayrılmış etiketler
+    assignee TEXT DEFAULT '',        -- ilgili kişi (ad/e-posta, serbest metin)
+    related_email_id INTEGER,
+    related_file_path TEXT,
+    related_event_id INTEGER,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_date);
+
 CREATE TABLE IF NOT EXISTS auth_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT DEFAULT (datetime('now')),
@@ -1333,3 +1353,135 @@ def delete_file_note(note_id: int):
     """Bir notu siler."""
     with get_db() as db:
         db.execute("DELETE FROM dataroom_notes WHERE id = ?", (note_id,))
+
+
+# ---- Görevler (Tasks) ----
+
+TASK_PRIORITIES = ("dusuk", "orta", "yuksek", "acil")
+TASK_STATUSES = ("yapilacak", "devam_ediyor", "tamamlandi", "iptal")
+
+_TASK_SELECT = """
+    SELECT t.*, e.subject AS related_email_subject,
+           COALESCE(e.sender_name, e.sender_email) AS related_email_sender,
+           ev.title AS related_event_title, ev.start AS related_event_start
+    FROM tasks t
+    LEFT JOIN emails e ON e.id = t.related_email_id
+    LEFT JOIN events ev ON ev.id = t.related_event_id
+"""
+
+
+def create_task(data: dict) -> int:
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO tasks (title, description, due_date, priority, status,
+                                   tags, assignee, related_email_id, related_file_path,
+                                   related_event_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                (data.get("title") or "").strip(),
+                (data.get("description") or "").strip(),
+                data.get("due_date") or None,
+                data.get("priority") or "orta",
+                data.get("status") or "yapilacak",
+                (data.get("tags") or "").strip(),
+                (data.get("assignee") or "").strip(),
+                data.get("related_email_id") or None,
+                data.get("related_file_path") or None,
+                data.get("related_event_id") or None,
+            ),
+        )
+        return cur.lastrowid
+
+
+def list_tasks(status: str | None = None, priority: str | None = None,
+               tag: str | None = None, q: str = "") -> list[dict]:
+    query = _TASK_SELECT + " WHERE 1=1"
+    params = []
+    if status:
+        query += " AND t.status = ?"
+        params.append(status)
+    if priority:
+        query += " AND t.priority = ?"
+        params.append(priority)
+    if tag:
+        query += " AND (',' || t.tags || ',') LIKE ?"
+        params.append(f"%,{tag},%")
+    if q.strip():
+        like = f"%{q.strip()}%"
+        query += " AND (t.title LIKE ? OR t.description LIKE ? OR t.tags LIKE ? OR t.assignee LIKE ?)"
+        params += [like, like, like, like]
+    query += """ ORDER BY
+                 CASE WHEN t.status IN ('tamamlandi', 'iptal') THEN 1 ELSE 0 END,
+                 CASE WHEN t.due_date IS NULL OR t.due_date = '' THEN 1 ELSE 0 END,
+                 t.due_date ASC, t.created_at DESC"""
+    with get_db() as db:
+        rows = db.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_task(task_id: int) -> dict | None:
+    with get_db() as db:
+        row = db.execute(_TASK_SELECT + " WHERE t.id = ?", (task_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def update_task(task_id: int, **fields):
+    allowed = {"title", "description", "due_date", "priority", "status", "tags",
+               "assignee", "related_email_id", "related_file_path", "related_event_id"}
+    sets, values = ["updated_at = datetime('now')"], []
+    for key, val in fields.items():
+        if key in allowed:
+            if key in ("title", "description", "tags", "assignee") and isinstance(val, str):
+                val = val.strip()
+            sets.append(f"{key} = ?")
+            values.append(val or None if key in ("due_date", "related_email_id",
+                                                   "related_file_path", "related_event_id") else val)
+    if len(sets) == 1:
+        return
+    if fields.get("status") == "tamamlandi":
+        sets.append("completed_at = datetime('now')")
+    elif "status" in fields:
+        sets.append("completed_at = NULL")
+    values.append(task_id)
+    with get_db() as db:
+        db.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", values)
+
+
+def complete_task(task_id: int, done: bool = True):
+    with get_db() as db:
+        if done:
+            db.execute(
+                """UPDATE tasks SET status = 'tamamlandi', completed_at = datetime('now'),
+                       updated_at = datetime('now') WHERE id = ?""",
+                (task_id,),
+            )
+        else:
+            db.execute(
+                """UPDATE tasks SET status = 'yapilacak', completed_at = NULL,
+                       updated_at = datetime('now') WHERE id = ?""",
+                (task_id,),
+            )
+
+
+def delete_task(task_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+
+
+def task_tags() -> list[str]:
+    """Var olan tüm etiketlerin benzersiz, sıralı listesi (öneri için)."""
+    with get_db() as db:
+        rows = db.execute("SELECT tags FROM tasks WHERE tags != ''").fetchall()
+    seen = set()
+    for r in rows:
+        for t in (r["tags"] or "").split(","):
+            t = t.strip()
+            if t:
+                seen.add(t)
+    return sorted(seen)
+
+
+def task_counts() -> dict:
+    with get_db() as db:
+        rows = db.execute("SELECT status, COUNT(*) AS n FROM tasks GROUP BY status").fetchall()
+    return {r["status"]: r["n"] for r in rows}
