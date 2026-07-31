@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 # Meil'i günceller ve (yeniden) başlatır.
-# Kullanım:  ./start.sh          → güncelle + başlat (port 8000)
-#            ./start.sh 8080     → farklı portta başlat
+# Kullanım:  ./start.sh          → .env içindeki PORT (yoksa 8000)
+#            ./start.sh 8080     → verilen port, .env değerini ezer
 set -e
 cd "$(dirname "$0")"
 
-PORT="${1:-8000}"
+# Worktree'ye özel PORT dahil ortam ayarlarını yükle.
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
+PORT="${1:-${PORT:-8000}}"
 
 echo "── Meil başlatılıyor ──"
 
