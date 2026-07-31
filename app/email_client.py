@@ -12,7 +12,7 @@ import re
 import smtplib
 from email.header import decode_header, make_header
 from email.message import EmailMessage
-from email.utils import parseaddr, parsedate_to_datetime
+from email.utils import make_msgid, parseaddr, parsedate_to_datetime
 
 from . import database, ms_oauth
 
@@ -277,10 +277,15 @@ def _smtp_connect(account: dict) -> smtplib.SMTP:
 
 
 def send_reply(account: dict, to_address: str, subject: str, body: str,
-               in_reply_to: str | None = None, references: str = ""):
-    """Onaylanan yanıtı, maili alan hesabın SMTP sunucusundan gönderir."""
+               in_reply_to: str | None = None, references: str = "") -> str:
+    """Onaylanan yanıtı, maili alan hesabın SMTP sunucusundan gönderir.
+
+    Ürettiği Message-ID'yi döner (bkz. send_message).
+    """
     _validate(account)
     msg = EmailMessage()
+    message_id = make_msgid()
+    msg["Message-ID"] = message_id
     msg["From"] = account["email"]
     msg["To"] = to_address
     msg["Subject"] = subject if subject.lower().startswith("re:") else f"Re: {subject}"
@@ -294,6 +299,7 @@ def send_reply(account: dict, to_address: str, subject: str, body: str,
     msg.set_content(body)
     with _smtp_connect(account) as smtp:
         smtp.send_message(msg)
+    return message_id
 
 
 class BulkSender:
@@ -354,12 +360,18 @@ class BulkSender:
 
 def send_message(account: dict, to_address: str, subject: str, body: str,
                  attachments: list[tuple[str, bytes]] | None = None,
-                 cc: str = ""):
-    """Yeni bir mail gönderir; isteğe bağlı CC ve ekli dosyalarla."""
+                 cc: str = "") -> str:
+    """Yeni bir mail gönderir; isteğe bağlı CC ve ekli dosyalarla.
+
+    Ürettiği Message-ID'yi döner — "cevap bekliyorum" takibi, gelen bir
+    yanıtın hangi giden maile ait olduğunu bu ID üzerinden eşleştirir.
+    """
     import mimetypes
 
     _validate(account)
     msg = EmailMessage()
+    message_id = make_msgid()
+    msg["Message-ID"] = message_id
     msg["From"] = account["email"]
     msg["To"] = to_address
     if cc.strip():
@@ -372,3 +384,4 @@ def send_message(account: dict, to_address: str, subject: str, body: str,
         msg.add_attachment(payload, maintype=maintype, subtype=subtype, filename=filename)
     with _smtp_connect(account) as smtp:
         smtp.send_message(msg)
+    return message_id

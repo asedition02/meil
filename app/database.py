@@ -199,6 +199,29 @@ CREATE TABLE IF NOT EXISTS reminders (
 CREATE INDEX IF NOT EXISTS idx_reminders_remind_at ON reminders(remind_at);
 CREATE INDEX IF NOT EXISTS idx_reminders_status ON reminders(status);
 
+-- Cevap bekliyorum: gönderdiğimiz bir mailin karşılığında yanıt gelene kadar
+-- takip edilmesi. Sent klasörü senkronize edilmediği için kayıt gönderim
+-- anında burada oluşturulur; çözümleme, gelen bir mailin in_reply_to/refs
+-- alanında bu satırın message_id'sinin geçip geçmediğine bakar.
+CREATE TABLE IF NOT EXISTS awaiting_replies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER,
+    to_email TEXT NOT NULL,
+    to_name TEXT DEFAULT '',
+    subject TEXT DEFAULT '',
+    message_id TEXT NOT NULL,        -- gönderdiğimiz mailin ürettiğimiz Message-ID'si
+    sent_at TEXT DEFAULT (datetime('now')),
+    due_at TEXT NOT NULL,            -- sent_at + kullanıcının seçtiği gün sayısı
+    status TEXT DEFAULT 'bekliyor',  -- bekliyor | cevaplandi
+    resolved_at TEXT,
+    resolved_email_id INTEGER,       -- otomatik eşleşen gelen mail (varsa)
+    notified_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_awaiting_status ON awaiting_replies(status);
+CREATE INDEX IF NOT EXISTS idx_awaiting_message_id ON awaiting_replies(message_id);
+CREATE INDEX IF NOT EXISTS idx_emails_in_reply_to ON emails(in_reply_to);
+
 CREATE TABLE IF NOT EXISTS auth_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT DEFAULT (datetime('now')),
@@ -1611,4 +1634,109 @@ def mark_reminder_notified(reminder_id: int):
         db.execute(
             "UPDATE reminders SET notified_at = datetime('now') WHERE id = ?",
             (reminder_id,),
+        )
+
+
+# ---- Cevap bekliyorum (Awaiting replies) ----
+
+def create_awaiting_reply(data: dict) -> int:
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO awaiting_replies
+               (account_id, to_email, to_name, subject, message_id, due_at)
+               VALUES (?,?,?,?,?,?)""",
+            (
+                data.get("account_id"),
+                (data.get("to_email") or "").strip(),
+                (data.get("to_name") or "").strip(),
+                (data.get("subject") or "").strip(),
+                data["message_id"],
+                data["due_at"],
+            ),
+        )
+        return cur.lastrowid
+
+
+def list_awaiting_replies(status: str | None = None) -> list[dict]:
+    query = "SELECT * FROM awaiting_replies WHERE 1=1"
+    params = []
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    query += " ORDER BY due_at ASC"
+    with get_db() as db:
+        rows = db.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_awaiting_reply(awaiting_id: int) -> dict | None:
+    with get_db() as db:
+        row = db.execute(
+            "SELECT * FROM awaiting_replies WHERE id = ?", (awaiting_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def resolve_awaiting_reply(awaiting_id: int):
+    """Kullanıcının elle 'cevaplandı' işaretlemesi."""
+    with get_db() as db:
+        db.execute(
+            """UPDATE awaiting_replies SET status = 'cevaplandi', resolved_at = datetime('now')
+               WHERE id = ?""",
+            (awaiting_id,),
+        )
+
+
+def cancel_awaiting_reply(awaiting_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM awaiting_replies WHERE id = ?", (awaiting_id,))
+
+
+def resolve_awaiting_replies_by_headers() -> int:
+    """Bekleyen kayıtları, eşleşen bir gelen mail varsa otomatik 'cevaplandi' yapar.
+
+    Eşleşme: gelen mailin in_reply_to alanı ya da refs alanı, bizim
+    ürettiğimiz message_id'yi içeriyorsa. Header'lar düzgün taşınmazsa
+    (bazı istemciler bunu yapmaz) manuel çözümleme yedek olarak kalır.
+    Kaç kaydın çözüldüğünü döner.
+    """
+    with get_db() as db:
+        pending = db.execute(
+            "SELECT id, message_id FROM awaiting_replies WHERE status = 'bekliyor'"
+        ).fetchall()
+        resolved = 0
+        for p in pending:
+            match = db.execute(
+                """SELECT id FROM emails
+                   WHERE in_reply_to = ? OR (refs IS NOT NULL AND refs LIKE ?)
+                   ORDER BY date DESC LIMIT 1""",
+                (p["message_id"], f"%{p['message_id']}%"),
+            ).fetchone()
+            if match:
+                db.execute(
+                    """UPDATE awaiting_replies
+                       SET status = 'cevaplandi', resolved_at = datetime('now'),
+                           resolved_email_id = ? WHERE id = ?""",
+                    (match["id"], p["id"]),
+                )
+                resolved += 1
+        return resolved
+
+
+def due_awaiting_replies_unnotified(now_iso: str) -> list[dict]:
+    """Süresi geçmiş, henüz bildirilmemiş bekleyen kayıtlar (zamanlayıcı için)."""
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT * FROM awaiting_replies
+               WHERE status = 'bekliyor' AND due_at <= ? AND notified_at IS NULL""",
+            (now_iso,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def mark_awaiting_reply_notified(awaiting_id: int):
+    with get_db() as db:
+        db.execute(
+            "UPDATE awaiting_replies SET notified_at = datetime('now') WHERE id = ?",
+            (awaiting_id,),
         )

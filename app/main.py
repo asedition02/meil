@@ -13,13 +13,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import (ai, auth, bulkmail, calendar_client, config, database, dataroom,
-               donna, email_client, extract, ms_oauth, reminder_notify, scheduler)
+from . import (ai, auth, awaiting_reply_notify, bulkmail, calendar_client, config,
+               database, dataroom, donna, email_client, extract, ms_oauth,
+               reminder_notify, scheduler)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("meil")
-
-scheduler.register_job("reminders", reminder_notify.notify_due_reminders)
 
 
 @asynccontextmanager
@@ -95,6 +94,7 @@ _bootstrap_env_account()
 
 class ReplyRequest(BaseModel):
     reply_text: str
+    await_reply_days: int | None = None   # verilirse "cevap bekliyorum" kaydı oluşturulur
 
 
 class RegenerateRequest(BaseModel):
@@ -462,6 +462,28 @@ def _sync_account(account: dict) -> dict:
             "checked": len(messages), "errors": errors}
 
 
+def _sync_accounts_list(accounts: list[dict]) -> dict:
+    """Verilen hesapları senkronize eder; yeni mail geldiyse cevap-bekleme
+    kayıtlarını header eşleşmesiyle çözmeyi dener."""
+    results, total_new = [], 0
+    for account in accounts:
+        try:
+            r = _sync_account(account)
+        except (email_client.EmailConfigError, email_client.EmailAuthError) as e:
+            r = {"account": account["email"], "new_emails": 0, "checked": 0, "errors": [str(e)]}
+        except Exception as e:
+            r = {"account": account["email"], "new_emails": 0, "checked": 0,
+                 "errors": [f"Bağlantı hatası: {e}"]}
+        total_new += r["new_emails"]
+        results.append(r)
+    if total_new:
+        try:
+            database.resolve_awaiting_replies_by_headers()
+        except Exception:
+            log.exception("Cevap-bekleme çözümleme hatası (sync sonrası)")
+    return {"new_emails": total_new, "results": results}
+
+
 @app.post("/api/sync")
 def sync_emails(account_id: int | None = None):
     """Tüm hesaplardan (veya tek hesaptan) yeni mailleri çeker ve tasnif eder."""
@@ -474,18 +496,20 @@ def sync_emails(account_id: int | None = None):
             status_code=400,
             detail="Kayıtlı hesap yok. Hesaplar sekmesinden bir mail hesabı ekleyin.",
         )
-    results, total_new = [], 0
-    for account in accounts:
-        try:
-            r = _sync_account(account)
-        except (email_client.EmailConfigError, email_client.EmailAuthError) as e:
-            r = {"account": account["email"], "new_emails": 0, "checked": 0, "errors": [str(e)]}
-        except Exception as e:
-            r = {"account": account["email"], "new_emails": 0, "checked": 0,
-                 "errors": [f"Bağlantı hatası: {e}"]}
-        total_new += r["new_emails"]
-        results.append(r)
-    return {"new_emails": total_new, "results": results}
+    return _sync_accounts_list(accounts)
+
+
+def _background_sync_all_accounts():
+    """Zamanlayıcı için: hesap yoksa sessizce çıkar (kurulum sonrası normal bir durum)."""
+    accounts = database.list_accounts(include_password=True)
+    if accounts:
+        _sync_accounts_list(accounts)
+
+
+scheduler.register_job("reminders", reminder_notify.notify_due_reminders)
+scheduler.register_job("awaiting-replies", awaiting_reply_notify.resolve_and_notify)
+scheduler.register_job("account-sync", _background_sync_all_accounts,
+                       every=scheduler.SYNC_EVERY_TICKS)
 
 
 # ---- Mailler ----
@@ -505,6 +529,7 @@ class ComposeRequest(BaseModel):
     subject: str = ""
     body: str
     email_id: int | None = None   # yanıt olarak gönderiliyorsa
+    await_reply_days: int | None = None   # verilirse "cevap bekliyorum" kaydı oluşturulur
 
 
 class ComposeDraftRequest(BaseModel):
@@ -562,6 +587,10 @@ def unarchive_email(email_id: int):
     return {"ok": True}
 
 
+def _days_from_now(days: int) -> str:
+    return (dt.datetime.now() + dt.timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+
 @app.post("/api/compose")
 def compose_send(req: ComposeRequest):
     """Sıfırdan yeni mail gönderir."""
@@ -573,7 +602,7 @@ def compose_send(req: ComposeRequest):
     if not req.body.strip():
         raise HTTPException(status_code=400, detail="Mail metni boş olamaz")
     try:
-        email_client.send_message(
+        message_id = email_client.send_message(
             account, req.to.strip(), req.subject.strip() or "(konu yok)",
             req.body, cc=req.cc,
         )
@@ -581,6 +610,12 @@ def compose_send(req: ComposeRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gönderim başarısız: {e}")
+    if req.await_reply_days and req.await_reply_days > 0:
+        database.create_awaiting_reply({
+            "account_id": req.account_id, "to_email": req.to.strip(),
+            "subject": req.subject.strip(), "message_id": message_id,
+            "due_at": _days_from_now(req.await_reply_days),
+        })
     return {"ok": True}
 
 
@@ -711,7 +746,7 @@ def send_reply(email_id: int, req: ReplyRequest):
                 detail="Bu mailin hangi hesaba ait olduğu belirlenemedi. Hesabı silip yeniden ekleyin ve maili tekrar eşitleyin.",
             )
     try:
-        email_client.send_reply(
+        message_id = email_client.send_reply(
             account=account,
             to_address=email_data["sender_email"],
             subject=email_data["subject"] or "",
@@ -724,6 +759,13 @@ def send_reply(email_id: int, req: ReplyRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gönderim başarısız: {e}")
     database.update_email(email_id, status="replied", suggested_reply=req.reply_text)
+    if req.await_reply_days and req.await_reply_days > 0:
+        database.create_awaiting_reply({
+            "account_id": account["id"], "to_email": email_data["sender_email"],
+            "to_name": email_data.get("sender_name") or "",
+            "subject": email_data["subject"] or "", "message_id": message_id,
+            "due_at": _days_from_now(req.await_reply_days),
+        })
     return {"ok": True}
 
 
@@ -1046,6 +1088,29 @@ def remove_reminder(reminder_id: int):
     if not database.get_reminder(reminder_id):
         raise HTTPException(status_code=404, detail="Hatırlatma bulunamadı")
     database.delete_reminder(reminder_id)
+    return {"ok": True}
+
+
+# ---- Cevap bekliyorum (Awaiting replies) ----
+
+@app.get("/api/awaiting-replies")
+def list_awaiting_replies_endpoint(status: str = ""):
+    return {"awaiting_replies": database.list_awaiting_replies(status=status or None)}
+
+
+@app.post("/api/awaiting-replies/{awaiting_id}/resolve")
+def resolve_awaiting_reply_endpoint(awaiting_id: int):
+    if not database.get_awaiting_reply(awaiting_id):
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı")
+    database.resolve_awaiting_reply(awaiting_id)
+    return {"ok": True, "awaiting_reply": database.get_awaiting_reply(awaiting_id)}
+
+
+@app.delete("/api/awaiting-replies/{awaiting_id}")
+def cancel_awaiting_reply_endpoint(awaiting_id: int):
+    if not database.get_awaiting_reply(awaiting_id):
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı")
+    database.cancel_awaiting_reply(awaiting_id)
     return {"ok": True}
 
 

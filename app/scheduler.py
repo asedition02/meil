@@ -15,13 +15,15 @@ import logging
 log = logging.getLogger("meil.scheduler")
 
 TICK_SECONDS = 60
+SYNC_EVERY_TICKS = 15  # ~15 dakikada bir (hesap senkronu gibi ağır işler için)
 
-_jobs: list[tuple[str, callable]] = []
+_jobs: list[dict] = []
 
 
-def register_job(name: str, fn):
-    """Her tick'te çalıştırılacak bir işi kaydeder."""
-    _jobs.append((name, fn))
+def register_job(name: str, fn, every: int = 1):
+    """Bir iş kaydeder. `every=1` (varsayılan) her tick'te, `every=N` her N
+    tick'te bir çalışır (ör. `SYNC_EVERY_TICKS` ile ağır işleri seyrekleştirmek için)."""
+    _jobs.append({"name": name, "fn": fn, "every": max(1, every), "counter": 0})
 
 
 def clear_jobs():
@@ -30,12 +32,15 @@ def clear_jobs():
 
 
 async def run_tick():
-    """Kayıtlı tüm işleri bir kez çalıştırır; hatalar loglanır, döngüyü durdurmaz."""
-    for name, fn in _jobs:
+    """Zamanı gelen işleri bir kez çalıştırır; hatalar loglanır, döngüyü durdurmaz."""
+    for job in _jobs:
+        job["counter"] += 1
+        if job["counter"] % job["every"] != 0:
+            continue
         try:
-            fn()
+            job["fn"]()
         except Exception:
-            log.exception("Zamanlanmış görev başarısız: %s", name)
+            log.exception("Zamanlanmış görev başarısız: %s", job["name"])
 
 
 async def run_forever(tick_seconds: float = TICK_SECONDS):

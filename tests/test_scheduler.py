@@ -49,3 +49,22 @@ def test_register_job_appends_and_clear_resets():
     assert len(scheduler._jobs) == 1
     scheduler.clear_jobs()
     assert scheduler._jobs == []
+
+
+def test_every_n_job_only_runs_on_the_nth_tick():
+    calls = []
+    scheduler.register_job("seyrek", lambda: calls.append(1), every=3)
+
+    asyncio.run(scheduler.run_tick())
+    asyncio.run(scheduler.run_tick())
+    assert calls == []          # 1. ve 2. tick'te çalışmamalı
+
+    asyncio.run(scheduler.run_tick())
+    assert calls == [1]         # 3. tick'te çalışmalı
+
+    asyncio.run(scheduler.run_tick())
+    asyncio.run(scheduler.run_tick())
+    assert calls == [1]         # 4. ve 5. tick'te çalışmamalı
+
+    asyncio.run(scheduler.run_tick())
+    assert calls == [1, 1]      # 6. tick'te tekrar çalışmalı

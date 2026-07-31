@@ -509,6 +509,10 @@ function renderDetail(e, threadMsgs = []) {
           <input id="regen-instruction" placeholder="AI'ya talimat: daha resmi yaz, toplantı öner…">
           <button class="pill ghost" id="regen-btn" title="Yeniden öner">${MI.refresh}</button>
         </div>
+        <label class="mvr-await">
+          <input type="checkbox" id="reply-await">
+          Cevap bekliyorum — <input type="number" id="reply-await-days" value="3" min="1" max="60"> gün içinde hatırlat
+        </label>
         <div class="mvr-actions">
           <button class="pill ghost" id="mvr-close">Kapat</button>
           <button class="pill ghost" id="archive-btn">Arşivle</button>
@@ -561,8 +565,10 @@ function renderDetail(e, threadMsgs = []) {
     const from = e.account_email ? ` (${e.account_email} hesabından)` : "";
     if (!confirm(`${e.sender_email} adresine${from} bu yanıt gönderilsin mi?`)) return;
     $("#send-btn").disabled = true;
+    const awaitDays = $("#reply-await").checked ? (parseInt($("#reply-await-days").value, 10) || 3) : null;
     try {
-      await api(`/api/emails/${e.id}/send`, { method: "POST", body: JSON.stringify({ reply_text: text }) });
+      await api(`/api/emails/${e.id}/send`, { method: "POST",
+        body: JSON.stringify({ reply_text: text, await_reply_days: awaitDays }) });
       toast("Yanıt gönderildi ✓");
       await loadEmails();
       selectEmail(e.id);
@@ -717,6 +723,10 @@ function openComposeModal(prefill = {}) {
         <input id="c-ai" placeholder="AI'ya anlatın: 'yarınki toplantıyı iptal et, kibarca'">
         <button class="pill ghost" id="c-ai-btn" style="flex:0 0 auto">${MI.sparkle} AI ile Yaz</button>
       </div>
+      <label class="mvr-await">
+        <input type="checkbox" id="c-await">
+        Cevap bekliyorum — <input type="number" id="c-await-days" value="3" min="1" max="60"> gün içinde hatırlat
+      </label>
     </div>
     <div class="modal-actions">
       <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
@@ -739,6 +749,7 @@ function openComposeModal(prefill = {}) {
   $("#c-send").onclick = async () => {
     const btn = $("#c-send");
     btn.disabled = true; btn.textContent = "Gönderiliyor...";
+    const awaitDays = $("#c-await").checked ? (parseInt($("#c-await-days").value, 10) || 3) : null;
     try {
       await api("/api/compose", { method: "POST",
         body: JSON.stringify({
@@ -747,6 +758,7 @@ function openComposeModal(prefill = {}) {
           cc: $("#c-cc").value.trim(),
           subject: $("#c-subject").value.trim(),
           body: $("#c-body").value,
+          await_reply_days: awaitDays,
         }) });
       toast("Mail gönderildi ✓");
       closeModal();
