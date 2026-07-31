@@ -1516,7 +1516,11 @@ def dataroom_send(req: SendFileRequest):
 
 class DonnaAskRequest(BaseModel):
     question: str
-    history: list[dict] = []
+    conversation_id: int | None = None
+
+
+class DonnaConversationRequest(BaseModel):
+    title: str
 
 
 @app.get("/api/donna/brief")
@@ -1592,17 +1596,70 @@ def donna_act(req: DonnaActionRequest):
 
 @app.post("/api/donna/ask")
 def donna_ask(req: DonnaAskRequest):
-    """Donna'ya soru sor — mailler, takvim ve dataroom verilerine dayanır."""
-    if not req.question.strip():
+    """Donna'ya soru sor — mailler, takvim ve dataroom verilerine dayanır.
+
+    Geçmiş artık istemciden değil, verilen (ya da otomatik oluşturulan)
+    konuşmanın DB kaydından okunur; soru + cevap da aynı konuşmaya yazılır.
+    """
+    question = req.question.strip()
+    if not question:
         raise HTTPException(status_code=400, detail="Soru boş olamaz")
     if not ai.available_providers():
         raise HTTPException(status_code=400,
                             detail="Yapay zekâ sağlayıcısı ayarlanmadı — .env dosyasını düzenleyin")
+    conversation_id = req.conversation_id
+    if not conversation_id or not database.get_conversation(conversation_id):
+        conversation_id = database.create_conversation(question[:40])
+    history = [
+        {"role": m["role"], "content": m["content"]}
+        for m in database.get_conversation_messages(conversation_id, limit=12)
+    ]
     try:
-        return donna.ask_with_tools(req.question.strip(), req.history, config.USER_NAME)
+        result = donna.ask_with_tools(question, history, config.USER_NAME)
     except Exception as e:
         log.exception("Donna yanıt hatası")
         raise HTTPException(status_code=502, detail=str(e)[:300])
+    database.add_donna_message(conversation_id, "user", question)
+    database.add_donna_message(conversation_id, "assistant", result.get("answer") or "",
+                               sources=result.get("sources"))
+    result["conversation_id"] = conversation_id
+    return result
+
+
+@app.get("/api/donna/conversations")
+def list_donna_conversations():
+    return {"conversations": database.list_conversations()}
+
+
+@app.post("/api/donna/conversations")
+def create_donna_conversation():
+    conversation_id = database.create_conversation()
+    return {"ok": True, "conversation": database.get_conversation(conversation_id)}
+
+
+@app.get("/api/donna/conversations/{conversation_id}/messages")
+def get_donna_conversation_messages(conversation_id: int):
+    if not database.get_conversation(conversation_id):
+        raise HTTPException(status_code=404, detail="Konuşma bulunamadı")
+    return {"messages": database.get_conversation_messages(conversation_id, limit=200)}
+
+
+@app.put("/api/donna/conversations/{conversation_id}")
+def rename_donna_conversation(conversation_id: int, req: DonnaConversationRequest):
+    if not database.get_conversation(conversation_id):
+        raise HTTPException(status_code=404, detail="Konuşma bulunamadı")
+    if not req.title.strip():
+        raise HTTPException(status_code=400, detail="Başlık boş olamaz")
+    database.rename_conversation(conversation_id, req.title)
+    return {"ok": True, "conversation": database.get_conversation(conversation_id)}
+
+
+@app.delete("/api/donna/conversations/{conversation_id}")
+def delete_donna_conversation(conversation_id: int):
+    if not database.get_conversation(conversation_id):
+        raise HTTPException(status_code=404, detail="Konuşma bulunamadı")
+    database.delete_conversation(conversation_id)
+    return {"ok": True}
 
 
 # ---- Yapay zekâ sağlayıcısı ----

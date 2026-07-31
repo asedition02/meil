@@ -2762,7 +2762,7 @@ $("#twofa-btn").onclick = openTwofa;
 
 // ---- Donna (asistan paneli) ----
 
-const donna = { open: false, loading: false, history: [], briefed: false };
+const donna = { open: false, loading: false, conversationId: null, conversations: [], briefed: false };
 
 function donnaOpen() {
   donna.open = true;
@@ -2785,6 +2785,7 @@ $("#donna-btn").onclick = () => (donna.open ? donnaClose() : donnaOpen());
 $("#donna-close").onclick = donnaClose;
 $("#donna-scrim").onclick = donnaClose;
 $("#donna-refresh").onclick = () => { donna.briefed = false; loadDonnaBrief(); };
+$("#donna-history-btn").onclick = loadDonnaConversations;
 
 const URGENCY = { acil: "u-high", normal: "u-mid", bilgi: "u-low" };
 const KIND_ICON = { mail: "✉️", etkinlik: "📅", fatura: "🧾", hatirlatma: "🔔" };
@@ -2864,10 +2865,9 @@ async function askDonna() {
   try {
     const r = await api("/api/donna/ask", {
       method: "POST",
-      body: JSON.stringify({ question: q, history: donna.history.slice(-6) }),
+      body: JSON.stringify({ question: q, conversation_id: donna.conversationId }),
     });
-    donna.history.push({ role: "user", content: q });
-    donna.history.push({ role: "assistant", content: r.answer || "" });
+    donna.conversationId = r.conversation_id;
     const srcs = (r.sources || []).map((s) =>
       `<button class="donna-src" data-mail="${s.id}">✉️ ${esc(s.sender)} · ${esc(s.subject)}</button>`).join("");
     const el = document.getElementById(thinkingId);
@@ -2889,6 +2889,121 @@ async function askDonna() {
     donna.loading = false;
     $("#donna-send").disabled = false;
     input.focus();
+  }
+}
+
+// --- Donna: kalıcı sohbet listesi ---
+
+async function loadDonnaConversations() {
+  const body = $("#donna-body");
+  setDonnaChips([]);
+  body.innerHTML = `<div class="donna-loading"><span></span><span></span><span></span> Sohbetler yükleniyor…</div>`;
+  try {
+    const r = await api("/api/donna/conversations");
+    donna.conversations = r.conversations;
+    renderDonnaConversationList();
+  } catch (e) {
+    body.innerHTML = `<p class="auth-error donna-err">${esc(e.message)}</p>`;
+  }
+}
+
+function renderDonnaConversationList() {
+  const body = $("#donna-body");
+  const rows = donna.conversations.map((c) => `
+    <div class="donna-conv-row${c.id === donna.conversationId ? " active" : ""}" data-conv-row="${c.id}">
+      <button class="donna-conv-open" data-open="${c.id}">
+        <b>${esc(c.title)}</b>
+        ${c.last_message ? `<span>${esc(c.last_message.slice(0, 64))}</span>` : "<span>Henüz mesaj yok</span>"}
+      </button>
+      <button class="icon-btn donna-conv-rename" data-rename="${c.id}" title="Yeniden adlandır">✎</button>
+      <button class="icon-btn donna-conv-delete" data-delete="${c.id}" title="Sil">${MI.x}</button>
+    </div>`).join("");
+  body.innerHTML = `
+    <div class="donna-conv-list">
+      <button class="donna-conv-new" id="donna-conv-new">+ Yeni sohbet</button>
+      ${rows || '<p class="donna-calm">Henüz sohbet yok — bir soru sorarak başlayın.</p>'}
+    </div>`;
+  $("#donna-conv-new").onclick = startNewDonnaConversation;
+  body.querySelectorAll("[data-open]").forEach((btn) => {
+    btn.onclick = () => openDonnaConversation(parseInt(btn.dataset.open, 10));
+  });
+  body.querySelectorAll("[data-rename]").forEach((btn) => {
+    btn.onclick = (e) => { e.stopPropagation(); startRenameDonnaConversation(parseInt(btn.dataset.rename, 10)); };
+  });
+  body.querySelectorAll("[data-delete]").forEach((btn) => {
+    btn.onclick = (e) => { e.stopPropagation(); deleteDonnaConversation(parseInt(btn.dataset.delete, 10)); };
+  });
+}
+
+function startRenameDonnaConversation(id) {
+  const row = $(`[data-conv-row="${id}"]`);
+  const conv = donna.conversations.find((c) => c.id === id);
+  if (!row || !conv) return;
+  const openBtn = row.querySelector(".donna-conv-open");
+  openBtn.innerHTML = `<input class="donna-conv-rename-input" value="${esc(conv.title)}" maxlength="120">`;
+  const input = openBtn.querySelector("input");
+  input.focus();
+  input.select();
+  const save = async () => {
+    const title = input.value.trim();
+    if (title && title !== conv.title) {
+      try {
+        await api(`/api/donna/conversations/${id}`, { method: "PUT", body: JSON.stringify({ title }) });
+      } catch (err) { toast(err.message, true); }
+    }
+    loadDonnaConversations();
+  };
+  input.onblur = save;
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") input.blur();
+    if (e.key === "Escape") { input.onblur = null; loadDonnaConversations(); }
+  };
+}
+
+async function deleteDonnaConversation(id) {
+  if (!confirm("Bu sohbet kalıcı olarak silinsin mi?")) return;
+  try {
+    await api(`/api/donna/conversations/${id}`, { method: "DELETE" });
+    if (donna.conversationId === id) donna.conversationId = null;
+    toast("Sohbet silindi");
+    loadDonnaConversations();
+  } catch (err) { toast(err.message, true); }
+}
+
+function startNewDonnaConversation() {
+  donna.conversationId = null;
+  setDonnaChips([]);
+  $("#donna-body").innerHTML = `
+    <div class="donna-brief">
+      <div class="donna-greet">Yeni sohbet</div>
+      <p class="donna-calm">Bir şey sorun — mailler, takvim veya belgeler hakkında.</p>
+    </div>`;
+  $("#donna-input").focus();
+}
+
+async function openDonnaConversation(id) {
+  donna.conversationId = id;
+  const body = $("#donna-body");
+  body.innerHTML = `<div class="donna-loading"><span></span><span></span><span></span> Sohbet yükleniyor…</div>`;
+  try {
+    const r = await api(`/api/donna/conversations/${id}/messages`);
+    if (!r.messages.length) {
+      body.innerHTML = `<p class="donna-calm">Bu sohbette henüz mesaj yok.</p>`;
+    } else {
+      body.innerHTML = r.messages.map((m) => {
+        if (m.role === "user") return `<div class="donna-msg me">${esc(m.content)}</div>`;
+        const srcs = (m.sources || []).map((s) =>
+          `<button class="donna-src" data-mail="${s.id}">✉️ ${esc(s.sender)} · ${esc(s.subject)}</button>`).join("");
+        return `<div class="donna-msg her">${esc(m.content).replace(/\n/g, "<br>")}${srcs ? `<div class="donna-srcs">${srcs}</div>` : ""}</div>`;
+      }).join("");
+      body.querySelectorAll(".donna-src").forEach((b) => {
+        b.onclick = () => openMailFromDonna(parseInt(b.dataset.mail, 10));
+      });
+    }
+    body.scrollTop = body.scrollHeight;
+    setDonnaChips([]);
+  } catch (e) {
+    body.innerHTML = `<p class="auth-error donna-err">${esc(e.message)}</p>`;
   }
 }
 

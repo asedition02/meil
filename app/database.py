@@ -222,6 +222,25 @@ CREATE INDEX IF NOT EXISTS idx_awaiting_status ON awaiting_replies(status);
 CREATE INDEX IF NOT EXISTS idx_awaiting_message_id ON awaiting_replies(message_id);
 CREATE INDEX IF NOT EXISTS idx_emails_in_reply_to ON emails(in_reply_to);
 
+-- Kalıcı Donna konuşmaları
+CREATE TABLE IF NOT EXISTS donna_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT DEFAULT 'Yeni sohbet',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_donna_conv_updated ON donna_conversations(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS donna_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL,
+    role TEXT NOT NULL,              -- user | assistant
+    content TEXT NOT NULL,
+    sources TEXT DEFAULT '[]',       -- JSON: kaynak mail listesi (varsa)
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_donna_msg_conv ON donna_messages(conversation_id, id);
+
 CREATE TABLE IF NOT EXISTS auth_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT DEFAULT (datetime('now')),
@@ -1740,3 +1759,81 @@ def mark_awaiting_reply_notified(awaiting_id: int):
             "UPDATE awaiting_replies SET notified_at = datetime('now') WHERE id = ?",
             (awaiting_id,),
         )
+
+
+# ---- Kalıcı Donna konuşmaları ----
+
+def create_conversation(title: str = "") -> int:
+    with get_db() as db:
+        cur = db.execute(
+            "INSERT INTO donna_conversations (title) VALUES (?)",
+            (title.strip()[:120] or "Yeni sohbet",),
+        )
+        return cur.lastrowid
+
+
+def list_conversations() -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT c.*,
+                      (SELECT content FROM donna_messages m WHERE m.conversation_id = c.id
+                       ORDER BY m.id DESC LIMIT 1) AS last_message
+               FROM donna_conversations c ORDER BY c.updated_at DESC"""
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_conversation(conversation_id: int) -> dict | None:
+    with get_db() as db:
+        row = db.execute(
+            "SELECT * FROM donna_conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def rename_conversation(conversation_id: int, title: str):
+    with get_db() as db:
+        db.execute(
+            "UPDATE donna_conversations SET title = ?, updated_at = datetime('now') WHERE id = ?",
+            (title.strip()[:120] or "Yeni sohbet", conversation_id),
+        )
+
+
+def delete_conversation(conversation_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM donna_messages WHERE conversation_id = ?", (conversation_id,))
+        db.execute("DELETE FROM donna_conversations WHERE id = ?", (conversation_id,))
+
+
+def add_donna_message(conversation_id: int, role: str, content: str,
+                      sources: list | None = None) -> int:
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO donna_messages (conversation_id, role, content, sources)
+               VALUES (?,?,?,?)""",
+            (conversation_id, role, content, json.dumps(sources or [], ensure_ascii=False)),
+        )
+        db.execute(
+            "UPDATE donna_conversations SET updated_at = datetime('now') WHERE id = ?",
+            (conversation_id,),
+        )
+        return cur.lastrowid
+
+
+def get_conversation_messages(conversation_id: int, limit: int = 20) -> list[dict]:
+    """En eski→en yeni sırada son `limit` mesaj."""
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT * FROM donna_messages WHERE conversation_id = ?
+               ORDER BY id DESC LIMIT ?""",
+            (conversation_id, limit),
+        ).fetchall()
+    out = []
+    for r in reversed(rows):
+        d = dict(r)
+        try:
+            d["sources"] = json.loads(d["sources"]) if d["sources"] else []
+        except (TypeError, ValueError):
+            d["sources"] = []
+        out.append(d)
+    return out
