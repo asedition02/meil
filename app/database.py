@@ -119,6 +119,14 @@ CREATE TABLE IF NOT EXISTS dataroom_notes (
 );
 CREATE INDEX IF NOT EXISTS idx_dataroom_notes_path ON dataroom_notes(file_path);
 
+CREATE TABLE IF NOT EXISTS donna_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role TEXT,                          -- user | assistant
+    content TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_donna_messages_id ON donna_messages(id DESC);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -768,6 +776,49 @@ def list_activity(limit: int = 25) -> list[dict]:
             "SELECT * FROM dataroom_activity ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ---- Donna hafızası ----
+
+def log_donna_message(role: str, content: str):
+    """Donna ile yapılan her konuşma turunu (soru/yanıt/uygulanan işlem) kalıcı hafızaya yazar."""
+    content = (content or "").strip()
+    if not content:
+        return
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO donna_messages (role, content) VALUES (?, ?)",
+            (role, content),
+        )
+
+
+def recent_donna_messages(limit: int = 20) -> list[dict]:
+    """Son N mesajı eskiden yeniye sırayla döner (bağlama kronolojik eklemek için)."""
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT role, content, created_at FROM donna_messages ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+
+
+def search_donna_messages(q: str, limit: int = 6) -> list[dict]:
+    """Geçmiş konuşmalarda anahtar kelime araması; en yeniden eskiye döner."""
+    tokens = [t.lower() for t in re.findall(r"\w+", q, re.UNICODE)[:8]]
+    if not tokens:
+        return []
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT role, content, created_at FROM donna_messages ORDER BY id DESC"
+        ).fetchall()
+    results = []
+    for r in rows:
+        content_low = (r["content"] or "").lower()
+        if any(t in content_low for t in tokens):
+            results.append(dict(r))
+            if len(results) >= limit:
+                break
+    return results
 
 
 # ---- Mailler ----

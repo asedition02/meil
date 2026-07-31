@@ -69,6 +69,13 @@ def _fmt_email(m: dict, with_body: bool = False) -> str:
     return line
 
 
+def _fmt_history(h: dict) -> str:
+    who = "Kullanıcı" if h.get("role") == "user" else NAME
+    when = (h.get("created_at") or "")[:16]
+    content = (h.get("content") or "")[:400]
+    return f"[{when}] {who}: {content}"
+
+
 def gather_context(question: str = "") -> dict:
     """Tüm kaynaklardan Donna'nın bağlamını toplar."""
     today = dt.date.today()
@@ -81,14 +88,17 @@ def gather_context(question: str = "") -> dict:
     invoices = database.upcoming_invoices(10)
     docs = database.recent_documents(6)
 
-    # Soru varsa: ilgili mailleri ve belge içeriklerini de ekle
-    related_mails, related_docs = [], []
+    # Soru varsa: ilgili mailleri, belge içeriklerini ve geçmiş konuşmaları da ekle
+    related_mails, related_docs, history_related = [], [], []
     if question.strip():
         related_mails = database.search_emails_for_chat(question, 10)
         try:
             related_docs = database.search_file_contents(question, 5)
         except Exception:                       # FTS yoksa sessizce geç
             related_docs = []
+        history_related = database.search_donna_messages(question, 6)
+
+    history_recent = database.recent_donna_messages(20)
 
     return {
         "today": today.isoformat(),
@@ -102,6 +112,8 @@ def gather_context(question: str = "") -> dict:
         "docs": docs,
         "related_mails": related_mails,
         "related_docs": related_docs,
+        "history_recent": history_recent,
+        "history_related": history_related,
     }
 
 
@@ -151,6 +163,14 @@ def _context_text(ctx: dict, with_bodies: bool = False) -> str:
             snippet = (d.get("snippet") or d.get("content") or "")[:500]
             out.append(f"[belge] {d.get('path','')}: {snippet}")
 
+    if ctx.get("history_recent"):
+        out.append("\n=== HAFIZA: SON KONUŞMALAR ===")
+        out += [_fmt_history(h) for h in ctx["history_recent"]]
+
+    if ctx.get("history_related"):
+        out.append("\n=== HAFIZA: SORUYLA İLGİLİ GEÇMİŞ KONUŞMALAR ===")
+        out += [_fmt_history(h) for h in ctx["history_related"]]
+
     return "\n".join(out)
 
 
@@ -168,6 +188,11 @@ gibi doldurma ifadeler kullanma.
 gerektiğini de söyle.
 - Türkçe konuş, kullanıcıya "siz" değil "sen" diye hitap et.
 - Sıcak ama profesyonel: arkadaşça, yaltaklanmadan.
+
+Hafızan var: "HAFIZA" başlıklı bölümlerde kullanıcıyla geçmişte konuştukların ve \
+uygulanan işlemler yer alır. Kullanıcı "bunu daha önce nasıl yapmıştım", "geçen sefer \
+ne demiştim" gibi geçmişe referans veren bir şey sorarsa bu bölümlere bak ve somut \
+şekilde hatırlat (tarihiyle birlikte). Bu senin not listesi değil, gerçek konuşma geçmişin.
 
 Kesin kurallar:
 - YALNIZCA sana verilen verilere dayan. Veride olmayan bir şeyi asla uydurma.
@@ -378,6 +403,9 @@ def ask(question: str, history: list[dict] | None = None, user_name: str = "") -
         result["action"] = action
     else:
         result["action"] = {"type": "yok"}
+
+    database.log_donna_message("user", question)
+    database.log_donna_message("assistant", result.get("answer") or "")
     return result
 
 
@@ -686,6 +714,9 @@ def ask_with_tools(question: str, history: list[dict] | None = None,
         for i in email_ids
         if i in known_emails
     ]
+
+    database.log_donna_message("user", question)
+    database.log_donna_message("assistant", answer)
 
     return {
         "answer": answer,

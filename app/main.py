@@ -1332,6 +1332,7 @@ def donna_act(req: DonnaActionRequest):
         if not req.reply_text.strip():
             raise HTTPException(status_code=400, detail="Yanıt metni boş olamaz")
         send_reply(req.email_id, ReplyRequest(reply_text=req.reply_text))
+        database.log_donna_message("assistant", f"[İşlem uygulandı] Mail {req.email_id} yanıtlandı.")
         return {"ok": True, "message": "Yanıt gönderildi"}
 
     if t == "etkinlik_olustur":
@@ -1340,6 +1341,10 @@ def donna_act(req: DonnaActionRequest):
             duration_minutes=req.duration_minutes or 60,
             location=req.location, notes=req.notes,
         ))
+        database.log_donna_message(
+            "assistant",
+            f"[İşlem uygulandı] '{req.title}' etkinliği {req.date} {req.time} olarak eklendi.",
+        )
         return {"ok": True, "message": "Etkinlik oluşturuldu", "event": ev}
 
     if t == "etkinlik_guncelle":
@@ -1348,16 +1353,22 @@ def donna_act(req: DonnaActionRequest):
             duration_minutes=req.duration_minutes or 60,
             location=req.location, notes=req.notes,
         ))
+        database.log_donna_message(
+            "assistant",
+            f"[İşlem uygulandı] Etkinlik {req.event_id} güncellendi: '{req.title}' {req.date} {req.time}.",
+        )
         return {"ok": True, "message": "Etkinlik güncellendi"}
 
     if t == "etkinlik_sil":
         remove_event(req.event_id)
+        database.log_donna_message("assistant", f"[İşlem uygulandı] Etkinlik {req.event_id} silindi.")
         return {"ok": True, "message": "Etkinlik silindi"}
 
     if t == "belge_sil":
         if not req.path.strip():
             raise HTTPException(status_code=400, detail="Dosya yolu gerekli")
         dataroom_delete(req.path)
+        database.log_donna_message("assistant", f"[İşlem uygulandı] Belge silindi: {req.path}")
         return {"ok": True, "message": "Belge silindi"}
 
     raise HTTPException(status_code=400, detail=f"Bilinmeyen işlem: {t}")
