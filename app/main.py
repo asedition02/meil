@@ -1908,8 +1908,41 @@ def bulk_history_detail(campaign_id: int):
     return {"campaign": camp, "recipients": database.list_campaign_recipients(campaign_id)}
 
 
+# ---- Bugün ----
+
+@app.get("/api/today")
+def today_overview():
+    """Bugün ekranı: görevler, hatırlatmalar, etkinlikler, cevap bekleyenler ve
+    (yapay zekâ ayarlıysa) Donna'nın günlük özeti — tek istekte."""
+    now = dt.datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
+    day_start = dt.datetime.combine(now.date(), dt.time.min)
+    day_end = day_start + dt.timedelta(days=1)
+
+    summary = None
+    if ai.available_providers():
+        try:
+            summary = donna.brief(config.USER_NAME)
+        except Exception:
+            log.exception("Bugün özeti üretilemedi")
+
+    open_tasks = [t for t in database.list_tasks(due_before=today_str)
+                 if t["status"] not in ("tamamlandi", "iptal")]
+
+    return {
+        "date": today_str,
+        "summary": summary,
+        "tasks": open_tasks,
+        "reminders": database.list_reminders(status="bekliyor",
+                                             upto=day_end.strftime("%Y-%m-%d %H:%M:%S")),
+        "events": database.list_events(day_start.isoformat(), day_end.isoformat()),
+        "awaiting_replies": database.list_awaiting_replies(status="bekliyor"),
+        "needs_reply_count": database.view_counts().get("awaiting", 0),
+    }
+
+
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 18
+API_VERSION = 19
 
 
 @app.get("/api/status")

@@ -1454,7 +1454,7 @@ def create_task(data: dict) -> int:
 
 
 def list_tasks(status: str | None = None, priority: str | None = None,
-               tag: str | None = None, q: str = "") -> list[dict]:
+               tag: str | None = None, q: str = "", due_before: str | None = None) -> list[dict]:
     query = _TASK_SELECT + " WHERE 1=1"
     params = []
     if status:
@@ -1466,6 +1466,9 @@ def list_tasks(status: str | None = None, priority: str | None = None,
     if tag:
         query += " AND (',' || t.tags || ',') LIKE ?"
         params.append(f"%,{tag},%")
+    if due_before:
+        query += " AND t.due_date IS NOT NULL AND t.due_date != '' AND t.due_date <= ?"
+        params.append(due_before)
     if q.strip():
         like = f"%{q.strip()}%"
         query += " AND (t.title LIKE ? OR t.description LIKE ? OR t.tags LIKE ? OR t.assignee LIKE ?)"

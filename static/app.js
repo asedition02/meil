@@ -193,11 +193,12 @@ document.querySelectorAll(".rail-btn").forEach((btn) => {
     document.querySelectorAll(".rail-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     const view = btn.dataset.view;
-    ["inbox", "calendar", "dataroom", "bulk", "tasks", "accounts"].forEach((v) => {
+    ["today", "inbox", "calendar", "dataroom", "bulk", "tasks", "accounts"].forEach((v) => {
       const elem = $(`#view-${v}`);
       if (!elem) { console.error(`View element not found: #view-${v}`); return; }
       elem.style.display = v === view ? "flex" : "none";
     });
+    if (view === "today") loadToday();
     if (view === "calendar") loadCalendar();
     if (view === "dataroom") loadDataroom();
     if (view === "bulk") loadBulk();
@@ -3547,11 +3548,193 @@ $("#task-q").oninput = (e) => {
   taskSearchTimer = setTimeout(() => { tasksState.q = val.trim(); loadTasks(); }, 300);
 };
 
+// ---- Bugün ----
+
+async function loadToday() {
+  const holder = $("#today-summary");
+  holder.innerHTML = `<div class="donna-loading"><span></span><span></span><span></span> Yükleniyor…</div>`;
+  try {
+    const r = await api("/api/today");
+    renderTodaySummary(r);
+    renderTodayEvents(r.events);
+    renderTodayTasks(r.tasks);
+    renderTodayReminders(r.reminders);
+    renderTodayAwaiting(r.awaiting_replies);
+    renderTodayNeedsReply(r.needs_reply_count);
+  } catch (e) {
+    holder.innerHTML = `<p class="auth-error donna-err">${esc(e.message)}</p>`;
+  }
+}
+
+function renderTodaySummary(r) {
+  const d = new Date(`${r.date}T00:00:00`);
+  const dateLabel = d.toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" });
+  const s = r.summary;
+  $("#today-summary").innerHTML = `
+    <h2 class="page-title">Bugün</h2>
+    <p class="today-date">${dateLabel}</p>
+    ${s
+      ? `<div class="today-brief"><b>${esc(s.greeting || "")}</b><p>${esc(s.headline || "")}</p></div>`
+      : `<p class="today-headline muted">Günlük özet için yapay zekâ sağlayıcısı ayarlayın.</p>`}`;
+}
+
+function timeLabel(iso) {
+  try { return new Date(iso).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }); }
+  catch { return ""; }
+}
+
+function formatReminderTime(text) {
+  try {
+    const d = new Date(text.replace(" ", "T"));
+    return d.toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  } catch { return text; }
+}
+
+function renderTodayEvents(events) {
+  const holder = $("#today-events");
+  if (!events.length) { holder.innerHTML = `<p class="today-empty">Bugün için etkinlik yok.</p>`; return; }
+  holder.innerHTML = events.map((e) => `
+    <div class="today-row">
+      <span class="today-row-time">${e.all_day ? "Tüm gün" : timeLabel(e.start)}</span>
+      <span class="today-row-main"><b>${esc(e.title || "(başlıksız)")}</b>${e.location ? `<span>${esc(e.location)}</span>` : ""}</span>
+    </div>`).join("");
+}
+
+function renderTodayTasks(tasks) {
+  const holder = $("#today-tasks");
+  if (!tasks.length) { holder.innerHTML = `<p class="today-empty">Açık görev yok.</p>`; return; }
+  holder.innerHTML = tasks.map((t) => `
+    <div class="today-row" data-open-task="${t.id}">
+      <span class="today-row-time">${taskDueBadge(t.due_date)}</span>
+      <span class="today-row-main"><b>${esc(t.title)}</b></span>
+      <span class="tk-priority tk-pri-${t.priority}">${TASK_PRIORITY_LABEL[t.priority] || t.priority}</span>
+    </div>`).join("");
+  holder.querySelectorAll("[data-open-task]").forEach((row) => {
+    row.onclick = () => {
+      const t = tasks.find((x) => x.id === Number(row.dataset.openTask));
+      if (t) openTaskModal(t);
+    };
+  });
+}
+
+function renderTodayReminders(reminders) {
+  const holder = $("#today-reminders");
+  if (!reminders.length) { holder.innerHTML = `<p class="today-empty">Hatırlatma yok.</p>`; return; }
+  holder.innerHTML = reminders.map((r) => `
+    <div class="today-row">
+      <button type="button" class="tk-checkbox" data-rcheck="${r.id}" title="Tamamlandı olarak işaretle"></button>
+      <span class="today-row-main" data-open-reminder="${r.id}"><b>${esc(r.text)}</b></span>
+      <span class="today-row-time">${formatReminderTime(r.remind_at)}</span>
+    </div>`).join("");
+  holder.querySelectorAll("[data-rcheck]").forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        await api(`/api/reminders/${btn.dataset.rcheck}/complete`, { method: "POST", body: JSON.stringify({ done: true }) });
+        loadToday();
+      } catch (e) { toast(e.message, true); }
+    };
+  });
+  holder.querySelectorAll("[data-open-reminder]").forEach((el) => {
+    el.onclick = () => {
+      const r = reminders.find((x) => x.id === Number(el.dataset.openReminder));
+      if (r) openReminderModal(r);
+    };
+  });
+}
+
+function renderTodayAwaiting(rows) {
+  const holder = $("#today-awaiting");
+  if (!rows.length) { holder.innerHTML = `<p class="today-empty">Cevap bekleyen yok.</p>`; return; }
+  const now = new Date();
+  holder.innerHTML = rows.map((r) => {
+    const overdue = new Date(r.due_at.replace(" ", "T")) < now;
+    return `
+    <div class="today-row">
+      <span class="today-row-main">
+        <b>${esc(r.to_name || r.to_email)}</b>
+        <span>${esc(r.subject || "(konusuz)")}</span>
+      </span>
+      <span class="today-row-time${overdue ? " tk-overdue" : ""}">${formatReminderTime(r.due_at)}</span>
+      <div class="today-row-actions">
+        <button class="pill mini" data-resolve="${r.id}">Cevaplandı</button>
+        <button class="icon-btn" data-cancel="${r.id}" title="Vazgeç">${MI.x}</button>
+      </div>
+    </div>`;
+  }).join("");
+  holder.querySelectorAll("[data-resolve]").forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        await api(`/api/awaiting-replies/${btn.dataset.resolve}/resolve`, { method: "POST" });
+        loadToday();
+      } catch (e) { toast(e.message, true); }
+    };
+  });
+  holder.querySelectorAll("[data-cancel]").forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        await api(`/api/awaiting-replies/${btn.dataset.cancel}`, { method: "DELETE" });
+        loadToday();
+      } catch (e) { toast(e.message, true); }
+    };
+  });
+}
+
+function renderTodayNeedsReply(count) {
+  const holder = $("#today-needs-reply");
+  if (!count) { holder.innerHTML = `<p class="today-empty">Yanıt bekleyen mail yok.</p>`; return; }
+  holder.innerHTML = `<button class="today-cta" id="today-goto-inbox"><b>${count}</b> mail yanıt bekliyor</button>`;
+  $("#today-goto-inbox").onclick = () => {
+    document.querySelector('.rail-btn[data-view="inbox"]').click();
+    state.activeView = "awaiting";
+    loadEmails();
+  };
+}
+
+function openReminderModal(reminder) {
+  const editing = !!reminder;
+  const localValue = reminder?.remind_at ? reminder.remind_at.replace(" ", "T").slice(0, 16) : "";
+  openModal(`
+    <h3>${editing ? "Hatırlatmayı Düzenle" : "Yeni Hatırlatma"}</h3>
+    <div class="form-col">
+      <input id="rm-text" placeholder="Ne hatırlatılsın?" value="${esc(reminder?.text || "")}">
+      <input id="rm-at" type="datetime-local" value="${localValue}">
+    </div>
+    <div class="modal-actions">
+      <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
+      <button class="pill accent" id="rm-save-btn">${editing ? "Kaydet" : "Hatırlatma Ekle"}</button>
+    </div>`);
+  $("#rm-save-btn").onclick = async () => {
+    const text = $("#rm-text").value.trim();
+    const remindAt = $("#rm-at").value;
+    if (!text) return toast("Hatırlatma metni gerekli", true);
+    if (!remindAt) return toast("Zaman seçin", true);
+    const btn = $("#rm-save-btn");
+    btn.disabled = true;
+    const body = { text, remind_at: remindAt.replace("T", " "), status: reminder?.status || "bekliyor" };
+    try {
+      if (editing) {
+        await api(`/api/reminders/${reminder.id}`, { method: "PUT", body: JSON.stringify(body) });
+        toast("Hatırlatma güncellendi");
+      } else {
+        await api("/api/reminders", { method: "POST", body: JSON.stringify(body) });
+        toast("Hatırlatma eklendi");
+      }
+      closeModal();
+      loadToday();
+    } catch (err) {
+      toast(err.message, true);
+      btn.disabled = false;
+    }
+  };
+}
+
+$("#today-reminder-new").onclick = () => openReminderModal(null);
+
 // ---- Başlatma ----
 
 async function bootApp() {
   try {
-    const EXPECTED_API_VERSION = 18;
+    const EXPECTED_API_VERSION = 19;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);

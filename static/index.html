@@ -66,6 +66,10 @@
   <div id="layout">
     <!-- Sol ray -->
     <nav id="rail">
+      <button class="rail-btn" data-view="today" title="Bugün">
+        <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></span>
+        <span class="rail-label">Bugün</span>
+      </button>
       <button class="rail-btn active" data-view="inbox" title="Posta">
         <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m3 8 8.1 5.4a2 2 0 0 0 1.8 0L21 8"/></svg></span>
         <span class="rail-label">Posta</span>
@@ -345,6 +349,42 @@
           </div>
           <div id="bh-stats" class="bh-stats"></div>
           <div id="bh-body"></div>
+        </div>
+      </div>
+    </main>
+
+    <main id="view-today" class="view" style="display:none">
+      <div class="page">
+        <div id="today-summary" class="today-summary"></div>
+
+        <div class="today-grid">
+          <section class="today-card">
+            <h3>Bugünkü Toplantılar</h3>
+            <div id="today-events" class="today-card-body"></div>
+          </section>
+
+          <section class="today-card">
+            <h3>Açık Görevler</h3>
+            <div id="today-tasks" class="today-card-body"></div>
+          </section>
+
+          <section class="today-card">
+            <div class="today-card-head">
+              <h3>Hatırlatmalar</h3>
+              <button class="pill mini" id="today-reminder-new">+ Yeni</button>
+            </div>
+            <div id="today-reminders" class="today-card-body"></div>
+          </section>
+
+          <section class="today-card">
+            <h3>Cevap Bekleyenler</h3>
+            <div id="today-awaiting" class="today-card-body"></div>
+          </section>
+
+          <section class="today-card">
+            <h3>Yanıt Bekleyen Mailler</h3>
+            <div id="today-needs-reply" class="today-card-body"></div>
+          </section>
         </div>
       </div>
     </main>
