@@ -11,8 +11,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import (ai, auth, bulkmail, calendar_client, config, database, dataroom,
-               donna, email_client, extract, ms_oauth)
+from . import (ai, auth, automations, bulkmail, calendar_client, config, database,
+               dataroom, donna, email_client, extract, ms_oauth)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("meil")
@@ -440,7 +440,13 @@ def sync_emails(account_id: int | None = None):
                  "errors": [f"Bağlantı hatası: {e}"]}
         total_new += r["new_emails"]
         results.append(r)
-    return {"new_emails": total_new, "results": results}
+    try:
+        new_notifications = automations.check_due()
+    except Exception:
+        log.exception("Otomasyon kontrolü başarısız")
+        new_notifications = []
+    return {"new_emails": total_new, "results": results,
+            "new_notifications": len(new_notifications)}
 
 
 # ---- Mailler ----
@@ -679,6 +685,10 @@ def send_reply(email_id: int, req: ReplyRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gönderim başarısız: {e}")
     database.update_email(email_id, status="replied", suggested_reply=req.reply_text)
+    try:
+        automations.on_reply_sent(email_data)
+    except Exception:
+        log.exception("Otomasyon bekleme saati başlatılamadı")
     return {"ok": True}
 
 
@@ -1318,6 +1328,10 @@ class DonnaActionRequest(BaseModel):
     location: str = ""
     notes: str = ""
     path: str = ""
+    summary: str = ""
+    automation_sender: str = ""
+    automation_interval_value: int = 0
+    automation_interval_unit: str = ""
 
 
 @app.post("/api/donna/act")
@@ -1360,6 +1374,18 @@ def donna_act(req: DonnaActionRequest):
         dataroom_delete(req.path)
         return {"ok": True, "message": "Belge silindi"}
 
+    if t == "otomasyon_olustur":
+        try:
+            automation = automations.create(
+                sender=req.automation_sender,
+                interval_value=req.automation_interval_value,
+                interval_unit=req.automation_interval_unit,
+                raw_text=req.summary,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True, "message": "Otomasyon oluşturuldu", "automation": automation}
+
     raise HTTPException(status_code=400, detail=f"Bilinmeyen işlem: {t}")
 
 
@@ -1376,6 +1402,55 @@ def donna_ask(req: DonnaAskRequest):
     except Exception as e:
         log.exception("Donna yanıt hatası")
         raise HTTPException(status_code=502, detail=str(e)[:300])
+
+
+# ---- Otomasyonlar ----
+
+class AutomationStatusRequest(BaseModel):
+    active: bool
+
+
+@app.get("/api/automations")
+def list_automations():
+    return {"automations": automations.list_all()}
+
+
+@app.post("/api/automations/{automation_id}/status")
+def set_automation_status(automation_id: int, req: AutomationStatusRequest):
+    if not database.get_automation(automation_id):
+        raise HTTPException(status_code=404, detail="Otomasyon bulunamadı")
+    automations.set_status(automation_id, req.active)
+    return {"ok": True}
+
+
+@app.delete("/api/automations/{automation_id}")
+def delete_automation(automation_id: int):
+    if not database.get_automation(automation_id):
+        raise HTTPException(status_code=404, detail="Otomasyon bulunamadı")
+    automations.remove(automation_id)
+    return {"ok": True}
+
+
+# ---- Bildirimler ----
+
+@app.get("/api/notifications")
+def list_notifications():
+    return {
+        "notifications": database.list_notifications(),
+        "unread_count": database.unread_notification_count(),
+    }
+
+
+@app.post("/api/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: int):
+    database.mark_notification_read(notification_id)
+    return {"ok": True}
+
+
+@app.post("/api/notifications/read-all")
+def mark_all_notifications_read():
+    database.mark_all_notifications_read()
+    return {"ok": True}
 
 
 # ---- Yapay zekâ sağlayıcısı ----
@@ -1569,7 +1644,7 @@ def bulk_send(req: BulkSendRequest):
 
 
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 16
+API_VERSION = 17
 
 
 @app.get("/api/status")

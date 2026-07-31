@@ -1005,6 +1005,7 @@ setInterval(async () => {
       toast(`${data.new_emails} yeni mail geldi`);
       loadEmails();
     }
+    if (data.new_notifications > 0) refreshNotifications();
   } catch { /* sessizce geç */ }
 }, 5 * 60 * 1000);
 
@@ -1021,6 +1022,7 @@ $("#sync-btn").onclick = async () => {
     if (failed.length) msg += ` — hata: ${failed.map((r) => r.account).join(", ")}`;
     toast(msg, failed.length > 0 && data.new_emails === 0);
     failed.forEach((r) => console.warn(r.account, r.errors));
+    if (data.new_notifications > 0) refreshNotifications();
     await loadEmails();
   } catch (err) {
     toast(err.message, true);
@@ -2612,15 +2614,15 @@ $("#twofa-btn").onclick = openTwofa;
 
 // ---- Donna (asistan paneli) ----
 
-const donna = { open: false, loading: false, history: [], briefed: false };
+const donna = { open: false, loading: false, history: [], briefed: false, notifications: [] };
 
 function donnaOpen() {
   donna.open = true;
   $("#donna-panel").classList.add("open");
   $("#donna-panel").setAttribute("aria-hidden", "false");
   $("#donna-scrim").hidden = false;
-  $("#donna-dot").hidden = true;
   if (!donna.briefed) loadDonnaBrief();
+  refreshNotifications();
   setTimeout(() => $("#donna-input").focus(), 260);
 }
 
@@ -2635,6 +2637,45 @@ $("#donna-btn").onclick = () => (donna.open ? donnaClose() : donnaOpen());
 $("#donna-close").onclick = donnaClose;
 $("#donna-scrim").onclick = donnaClose;
 $("#donna-refresh").onclick = () => { donna.briefed = false; loadDonnaBrief(); };
+$("#donna-automations-btn").onclick = () => { if (!donna.open) donnaOpen(); loadAutomationsList(); };
+
+// ---- Bildirimler (otomasyon uyarıları) ----
+
+async function refreshNotifications() {
+  try {
+    const r = await api("/api/notifications");
+    donna.notifications = r.notifications || [];
+    $("#donna-dot").hidden = (r.unread_count || 0) === 0;
+    if (donna.open && donna.briefed) renderNotifBlock();
+  } catch { /* sessizce geç */ }
+}
+
+function renderNotifBlock() {
+  const holder = $("#donna-notifs-slot");
+  if (!holder) return;
+  const unread = donna.notifications.filter((n) => !n.is_read);
+  if (!unread.length) { holder.innerHTML = ""; return; }
+  holder.innerHTML = `
+    <div class="donna-notifs">
+      <div class="dn-head">🔔 Bildirimler <button class="dn-readall">Tümünü okundu işaretle</button></div>
+      ${unread.map((n) => `
+        <div class="donna-notif" data-id="${n.id}">
+          <div class="dn-body"><b>${esc(n.title)}</b><span>${esc(n.body)}</span></div>
+          <button class="dn-read" title="Okundu işaretle">✓</button>
+        </div>`).join("")}
+    </div>`;
+  holder.querySelector(".dn-readall").onclick = async () => {
+    await api("/api/notifications/read-all", { method: "POST" });
+    await refreshNotifications();
+  };
+  holder.querySelectorAll(".dn-read").forEach((btn) => {
+    btn.onclick = async () => {
+      const row = btn.closest(".donna-notif");
+      await api(`/api/notifications/${row.dataset.id}/read`, { method: "POST" });
+      await refreshNotifications();
+    };
+  });
+}
 
 const URGENCY = { acil: "u-high", normal: "u-mid", bilgi: "u-low" };
 const KIND_ICON = { mail: "✉️", etkinlik: "📅", fatura: "🧾", hatirlatma: "🔔" };
@@ -2662,6 +2703,7 @@ async function loadDonnaBrief() {
         ${it.email_id ? '<span class="di-go">→</span>' : ""}
       </button>`).join("");
     body.innerHTML = `
+      <div id="donna-notifs-slot"></div>
       <div class="donna-brief">
         <div class="donna-greet">${esc(r.greeting || "Merhaba")}</div>
         <div class="donna-headline">${esc(r.headline || "")}</div>
@@ -2676,6 +2718,7 @@ async function loadDonnaBrief() {
     body.querySelectorAll(".donna-item[data-mail]").forEach((el) => {
       el.onclick = () => openMailFromDonna(parseInt(el.dataset.mail, 10));
     });
+    renderNotifBlock();
     setDonnaChips(["Bugün neler var?", "Acil yanıtlamam gerekenler?", "Bu hafta hangi ödemeler var?"]);
   } catch (e) {
     body.innerHTML = `<p class="auth-error donna-err">${esc(e.message)}</p>`;
@@ -2688,6 +2731,50 @@ function setDonnaChips(list) {
   $("#donna-chips").querySelectorAll(".donna-chip").forEach((c) => {
     c.onclick = () => { $("#donna-input").value = c.textContent; askDonna(); };
   });
+}
+
+// ---- Otomasyonlarım (yönetim listesi) ----
+
+async function loadAutomationsList() {
+  const body = $("#donna-body");
+  body.innerHTML = `<div class="donna-loading"><span></span><span></span><span></span> Otomasyonlar yükleniyor…</div>`;
+  setDonnaChips([]);
+  try {
+    const r = await api("/api/automations");
+    const list = r.automations || [];
+    const rows = list.map((a) => `
+      <div class="donna-auto ${a.status === "paused" ? "paused" : ""}" data-id="${a.id}">
+        <div class="da2-main">
+          <b>${esc(a.sender_name || a.sender_email || "Gönderen")}</b>
+          <span>${esc(a.interval_text)} içinde yanıt gelmezse bildir ${a.waiting ? "· şu an bekleniyor" : ""}</span>
+        </div>
+        <div class="da2-btns">
+          <button class="pill ghost sm da2-toggle">${a.status === "paused" ? "Etkinleştir" : "Duraklat"}</button>
+          <button class="pill danger-ghost sm da2-del">Sil</button>
+        </div>
+      </div>`).join("");
+    body.innerHTML = `
+      <div class="donna-auto-list">
+        <button class="link-btn da2-back">← Brifinge dön</button>
+        <h4>Otomasyonlarım</h4>
+        ${rows || '<p class="donna-calm">Henüz bir otomasyon yok. Donna\'ya "X\'ten 3 gün yanıt gelmezse bildir" gibi yazarak oluşturabilirsin.</p>'}
+      </div>`;
+    body.querySelector(".da2-back").onclick = () => { donna.briefed = false; loadDonnaBrief(); };
+    body.querySelectorAll(".donna-auto").forEach((row) => {
+      const id = row.dataset.id;
+      row.querySelector(".da2-toggle").onclick = async () => {
+        const paused = row.classList.contains("paused");
+        await api(`/api/automations/${id}/status`, { method: "POST", body: JSON.stringify({ active: paused }) });
+        loadAutomationsList();
+      };
+      row.querySelector(".da2-del").onclick = async () => {
+        await api(`/api/automations/${id}`, { method: "DELETE" });
+        loadAutomationsList();
+      };
+    });
+  } catch (e) {
+    body.innerHTML = `<p class="auth-error donna-err">${esc(e.message)}</p>`;
+  }
 }
 
 async function openMailFromDonna(id) {
@@ -2751,6 +2838,7 @@ const ACTION_META = {
   etkinlik_sil:      ["🗑️", "Etkinliği sil", "Sil"],
   belge_sil:         ["🗑️", "Belgeyi sil", "Sil"],
   belge_yukle:       ["📎", "Belge yükle", "Yükleme ekranını aç"],
+  otomasyon_olustur: ["🔔", "Otomasyon oluştur", "Oluştur"],
 };
 
 function renderDonnaAction(a) {
@@ -2770,13 +2858,26 @@ function renderDonnaAction(a) {
         <input class="da-input" data-f="date" type="date" value="${esc(a.date || "")}">
         <input class="da-input" data-f="time" type="time" value="${esc(a.time || "")}">
         <input class="da-input da-dur" data-f="duration_minutes" type="number" min="15" step="15"
-               value="${a.duration_minutes || 60}" title="Süre (dk)">
+               value="${a.duration_minutes || 60}" data-def="60" title="Süre (dk)">
       </div>
       <input class="da-input" data-f="location" value="${esc(a.location || "")}" placeholder="Yer (isteğe bağlı)">`;
   } else if (a.type === "etkinlik_sil") {
     fields = `<div class="da-line"><b>${esc(a.event_title || "")}</b> · ${esc(a.event_when || "")}</div>`;
   } else if (a.type === "belge_sil") {
     fields = `<div class="da-line"><code>${esc(a.path || "")}</code></div>`;
+  } else if (a.type === "otomasyon_olustur") {
+    fields = `
+      <input class="da-input" data-f="automation_sender" value="${esc(a.automation_sender || "")}" placeholder="Gönderen adı/e-postası">
+      <div class="da-row">
+        <input class="da-input da-dur" data-f="automation_interval_value" type="number" min="1" step="1"
+               value="${a.automation_interval_value || 1}" data-def="1" title="Süre">
+        <select class="da-input" data-f="automation_interval_unit">
+          <option value="gun" ${a.automation_interval_unit === "gun" ? "selected" : ""}>gün</option>
+          <option value="saat" ${a.automation_interval_unit === "saat" ? "selected" : ""}>saat</option>
+        </select>
+      </div>
+      <div class="da-line">🔔 Eylem: Bildirim gönder</div>
+      ${a.automation_note ? `<div class="da-line da-muted">${esc(a.automation_note)}</div>` : ""}`;
   }
 
   donnaAppend(`
@@ -2799,7 +2900,9 @@ function renderDonnaAction(a) {
   card.querySelector(".da-ok").onclick = async () => {
     const payload = { ...a };
     card.querySelectorAll("[data-f]").forEach((el) => {
-      payload[el.dataset.f] = el.type === "number" ? parseInt(el.value, 10) || 60 : el.value;
+      payload[el.dataset.f] = el.type === "number"
+        ? parseInt(el.value, 10) || parseInt(el.dataset.def || "0", 10)
+        : el.value;
     });
     if (a.type === "belge_yukle") {
       donnaClose();
@@ -3009,7 +3112,7 @@ $("#log-btn").onclick = openSecurityLog;
 
 async function bootApp() {
   try {
-    const EXPECTED_API_VERSION = 16;
+    const EXPECTED_API_VERSION = 17;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);
@@ -3026,6 +3129,7 @@ async function bootApp() {
     }
   } catch { /* yoksay */ }
   loadEmails().catch((e) => toast(e.message, true));
+  refreshNotifications();
 }
 
 (async function init() {

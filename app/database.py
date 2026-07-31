@@ -144,6 +144,35 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_msgid_account
     ON emails(message_id, account_id);
 CREATE INDEX IF NOT EXISTS idx_emails_category ON emails(category);
 CREATE INDEX IF NOT EXISTS idx_emails_status ON emails(status);
+
+CREATE TABLE IF NOT EXISTS automations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    raw_text TEXT,                       -- kullanıcının yazdığı orijinal cümle
+    trigger_type TEXT DEFAULT 'yanit_gelmezse',  -- şimdilik tek tetikleyici türü
+    sender_name TEXT,
+    sender_email TEXT,                   -- eşleşen hesap biliniyorsa
+    interval_value INTEGER,
+    interval_unit TEXT,                  -- saat | gun
+    action_type TEXT DEFAULT 'bildir',
+    status TEXT DEFAULT 'active',        -- active | paused
+    account_id INTEGER,                  -- izlenen konuşmanın hesabı
+    thread_id TEXT,                      -- izlenen konuşma (varsa)
+    waiting_since TEXT,                  -- ISO tarih-saat; bekleme ne zaman başladı (NULL = henüz beklemiyor)
+    last_triggered_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_automations_status ON automations(status);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    automation_id INTEGER,
+    title TEXT,
+    body TEXT,
+    email_id INTEGER,
+    is_read INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read);
 """
 
 
@@ -1207,3 +1236,159 @@ def delete_file_note(note_id: int):
     """Bir notu siler."""
     with get_db() as db:
         db.execute("DELETE FROM dataroom_notes WHERE id = ?", (note_id,))
+
+
+# ---- Otomasyonlar (Donna) ----
+
+def create_automation(data: dict) -> int:
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO automations
+                   (raw_text, trigger_type, sender_name, sender_email,
+                    interval_value, interval_unit, action_type, status,
+                    account_id, thread_id, waiting_since)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)""",
+            (data.get("raw_text", ""), data.get("trigger_type", "yanit_gelmezse"),
+             data.get("sender_name", ""), data.get("sender_email", ""),
+             data.get("interval_value"), data.get("interval_unit"),
+             data.get("action_type", "bildir"),
+             data.get("account_id"), data.get("thread_id"), data.get("waiting_since")),
+        )
+        return cur.lastrowid
+
+
+def list_automations() -> list[dict]:
+    with get_db() as db:
+        rows = db.execute("SELECT * FROM automations ORDER BY id DESC").fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_automation(automation_id: int) -> dict | None:
+    with get_db() as db:
+        row = db.execute("SELECT * FROM automations WHERE id = ?", (automation_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def update_automation(automation_id: int, **fields):
+    if not fields:
+        return
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    with get_db() as db:
+        db.execute(f"UPDATE automations SET {sets} WHERE id = ?", (*fields.values(), automation_id))
+
+
+def delete_automation(automation_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM automations WHERE id = ?", (automation_id,))
+
+
+def active_automations(trigger_type: str | None = None) -> list[dict]:
+    query = "SELECT * FROM automations WHERE status = 'active'"
+    params: list = []
+    if trigger_type:
+        query += " AND trigger_type = ?"
+        params.append(trigger_type)
+    with get_db() as db:
+        rows = db.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def find_sender(query: str) -> dict | None:
+    """Verilen isim/e-posta parçasına en çok mail gönderen kişiyi bulur (otomasyon önizlemesi için)."""
+    q = (query or "").strip()
+    if not q:
+        return None
+    like = f"%{q}%"
+    with get_db() as db:
+        row = db.execute(
+            """SELECT sender_name, sender_email, COUNT(*) AS n, MAX(date) AS last_date
+               FROM emails WHERE sender_name LIKE ? OR sender_email LIKE ?
+               GROUP BY sender_email ORDER BY n DESC LIMIT 1""",
+            (like, like),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def find_awaiting_thread(sender_name: str, sender_email: str) -> dict | None:
+    """Gönderenle olan, en son mesajı bizim zaten yanıtladığımız (top şimdi onun
+    sırasında olan) bir konuşma var mı bakar — varsa otomasyonun bekleme saatini
+    kural oluşturulur oluşturulmaz başlatmak için kullanılır.
+    """
+    name, email = (sender_name or "").strip(), (sender_email or "").strip()
+    if not name and not email:
+        return None
+    conditions, params = [], []
+    if email:
+        conditions.append("sender_email = ?")
+        params.append(email)
+    if name:
+        conditions.append("sender_name LIKE ?")
+        params.append(f"%{name}%")
+    with get_db() as db:
+        threads = db.execute(
+            f"""SELECT DISTINCT account_id, thread_id FROM emails
+                WHERE ({' OR '.join(conditions)}) AND thread_id IS NOT NULL""",
+            params,
+        ).fetchall()
+        for t in threads:
+            last = db.execute(
+                """SELECT * FROM emails WHERE account_id IS ? AND thread_id = ?
+                   ORDER BY date DESC, id DESC LIMIT 1""",
+                (t["account_id"], t["thread_id"]),
+            ).fetchone()
+            if not last or last["status"] != "replied":
+                continue
+            if email and (last["sender_email"] or "").lower() != email.lower():
+                continue
+            if not email and name.lower() not in (last["sender_name"] or "").lower():
+                continue
+            return dict(last)
+    return None
+
+
+def newer_message_exists(account_id, thread_id: str, sender_email: str, since: str) -> bool:
+    """`since` tarihinden sonra o kişiden aynı konuşmada yeni mail gelmiş mi?"""
+    with get_db() as db:
+        row = db.execute(
+            """SELECT 1 FROM emails
+               WHERE account_id IS ? AND thread_id = ? AND sender_email = ? AND date > ?
+               LIMIT 1""",
+            (account_id, thread_id, sender_email, since),
+        ).fetchone()
+        return row is not None
+
+
+# ---- Bildirimler ----
+
+def create_notification(automation_id: int, title: str, body: str,
+                        email_id: int | None = None) -> int:
+    with get_db() as db:
+        cur = db.execute(
+            "INSERT INTO notifications (automation_id, title, body, email_id) VALUES (?, ?, ?, ?)",
+            (automation_id, title, body, email_id),
+        )
+        return cur.lastrowid
+
+
+def list_notifications(limit: int = 20) -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT * FROM notifications ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def unread_notification_count() -> int:
+    with get_db() as db:
+        row = db.execute("SELECT COUNT(*) AS n FROM notifications WHERE is_read = 0").fetchone()
+        return row["n"]
+
+
+def mark_notification_read(notification_id: int):
+    with get_db() as db:
+        db.execute("UPDATE notifications SET is_read = 1 WHERE id = ?", (notification_id,))
+
+
+def mark_all_notifications_read():
+    with get_db() as db:
+        db.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0")

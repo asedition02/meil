@@ -12,7 +12,7 @@ NVIDIA / Claude'dan hangisi etkinse onu kullanır.
 import datetime as dt
 import json
 
-from . import ai, database
+from . import ai, automations, database
 
 MAX_BODY = 900          # bağlama giren mail gövdesi sınırı
 NAME = "Donna"
@@ -225,7 +225,7 @@ BRIEF_SCHEMA = {
 
 
 ACTION_TYPES = ["yok", "mail_yanitla", "etkinlik_olustur", "etkinlik_guncelle",
-                "etkinlik_sil", "belge_sil", "belge_yukle"]
+                "etkinlik_sil", "belge_sil", "belge_yukle", "otomasyon_olustur"]
 
 ACTION_SCHEMA = {
     "type": "object",
@@ -249,9 +249,39 @@ ACTION_SCHEMA = {
         "duration_minutes": {"type": "integer", "description": "Etkinlik süresi; bilinmiyorsa 60, ilgisizse 0."},
         "location": {"type": "string", "description": "Etkinlik yeri; yoksa boş."},
         "path": {"type": "string", "description": "belge_sil için dataroom dosya yolu; değilse boş."},
+        "automation_sender": {
+            "type": "string",
+            "description": (
+                "otomasyon_olustur için: kullanıcının belirttiği gönderen adı/e-postası, "
+                "aynen kullanıcının söylediği gibi (ör. 'Mehmet Bey', 'ayse@sirket.com'). Değilse boş."
+            ),
+        },
+        "automation_interval_value": {
+            "type": "integer",
+            "description": (
+                "otomasyon_olustur için: sayısal süre değeri. 'üç gün'→3, 'bir hafta'→7 (gün), "
+                "'48 saat'→48. İlgisizse 0."
+            ),
+        },
+        "automation_interval_unit": {
+            "type": "string",
+            "enum": ["saat", "gun", ""],
+            "description": "otomasyon_olustur için: 'saat' veya 'gun'. İlgisizse boş.",
+        },
+        "automation_action": {
+            "type": "string",
+            "enum": ["bildir", "desteklenmiyor", ""],
+            "description": (
+                "otomasyon_olustur için: kullanıcı 'bana bildir / haber ver' gibi bir şey "
+                "istiyorsa 'bildir'. Otomatik yanıtlama, silme gibi başka bir eylem istiyorsa "
+                "'desteklenmiyor' yaz (henüz sadece bildirim otomasyonu destekleniyor). İlgisizse boş."
+            ),
+        },
     },
     "required": ["type", "summary", "email_id", "reply_text", "event_id",
-                 "title", "date", "time", "duration_minutes", "location", "path"],
+                 "title", "date", "time", "duration_minutes", "location", "path",
+                 "automation_sender", "automation_interval_value",
+                 "automation_interval_unit", "automation_action"],
     "additionalProperties": False,
 }
 
@@ -329,6 +359,15 @@ def ask(question: str, history: list[dict] | None = None, user_name: str = "") -
         "Güncellemede değişmeyen alanları da mevcut değerleriyle doldur."
         "\n- belge_sil: path'i verilerdeki [belge] yolundan aynen al."
         "\n- belge_yukle: dosyayı kullanıcı seçeceği için sadece type ve summary yeterli."
+        "\n- otomasyon_olustur: kullanıcı '... cevap gelmezse / yanıt vermezse bana bildir/haber ver' "
+        "gibi bir kural tanımlıyorsa (ör. 'Mehmet Bey'den üç gün cevap gelmezse bana bildir') bunu "
+        "kullan. automation_sender'a gönderenin adını/e-postasını aynen yaz, automation_interval_value "
+        "ve automation_interval_unit'e süreyi çöz ('üç gün'→3/gun, 'bir hafta'→7/gun, '48 saat'→48/saat), "
+        "automation_action'a 'bildir' yaz. Kullanıcı bildirim dışında bir şey istiyorsa (ör. 'otomatik "
+        "yanıtla', 'sil') automation_action='desteklenmiyor' yaz ve yanıtında bunun henüz desteklenmediğini "
+        "söyle. Bu tür kurallar şimdilik yalnızca 'gönderenden yanıt gelmezse bildir' biçiminde çalışır; "
+        "başka bir tetikleyici (ör. 'her sabah özet gönder') istenirse type='yok' bırak ve kullanıcıya "
+        "henüz bunun desteklenmediğini söyle."
         "\nSadece soru soruluyorsa type='yok' bırak. İşlemi SEN yapmıyorsun — hazırladığın işlem "
         "kullanıcıya onay kartı olarak gösterilir, onaylarsa uygulanır. Bunu yanıtında belirt "
         "(ör. 'Hazırladım, onaylarsan gönderiyorum'). Emin olamadığın bir ID veya yol varsa "
@@ -375,6 +414,8 @@ def ask(question: str, history: list[dict] | None = None, user_name: str = "") -
                 action["event_when"] = (ev.get("start") or "").replace("T", " ")[:16]
             else:
                 action["type"] = "yok"
+        elif action["type"] == "otomasyon_olustur":
+            action = automations.enrich_action(action)
         result["action"] = action
     else:
         result["action"] = {"type": "yok"}
@@ -519,6 +560,38 @@ DONNA_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_automation",
+            "description": (
+                "'Bir gönderenden belirli sürede yanıt gelmezse bana bildir' türünde bir "
+                "otomasyon kuralı hazırlar (ör. 'Mehmet Bey'den üç gün cevap gelmezse bana "
+                "bildir'). Kullanıcı onaylayana kadar kaydedilmez. Bildirim dışında bir eylem "
+                "isteniyorsa (otomatik yanıtlama, silme vb.) bu aracı kullanma."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sender": {
+                        "type": "string",
+                        "description": "Gönderenin adı veya e-postası, kullanıcının söylediği gibi.",
+                    },
+                    "interval_value": {
+                        "type": "integer",
+                        "description": "Sayısal süre. 'üç gün'→3, 'bir hafta'→7, '48 saat'→48.",
+                    },
+                    "interval_unit": {
+                        "type": "string",
+                        "enum": ["saat", "gun"],
+                        "description": "Süre birimi: 'saat' veya 'gun'.",
+                    },
+                },
+                "required": ["sender", "interval_value", "interval_unit"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 _TOOL_TO_ACTION = {
@@ -526,6 +599,7 @@ _TOOL_TO_ACTION = {
     "create_calendar_event": "etkinlik_olustur",
     "update_calendar_event": "etkinlik_guncelle",
     "delete_calendar_event": "etkinlik_sil",
+    "create_automation": "otomasyon_olustur",
 }
 
 _EMPTY_ACTION: dict = {
@@ -533,6 +607,8 @@ _EMPTY_ACTION: dict = {
     "email_id": 0, "reply_text": "",
     "event_id": 0, "title": "", "date": "", "time": "",
     "duration_minutes": 0, "location": "", "path": "",
+    "automation_sender": "", "automation_interval_value": 0,
+    "automation_interval_unit": "", "automation_action": "",
 }
 
 
@@ -607,6 +683,23 @@ def _tool_call_to_action(name: str, args: dict, ctx: dict) -> dict:
         else:
             action["summary"] = f"Etkinlik {event_id} silinecek"
 
+    elif action_type == "otomasyon_olustur":
+        sender = (args.get("sender") or "").strip()
+        unit = (args.get("interval_unit") or "").strip()
+        try:
+            value = int(args.get("interval_value") or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if not sender or value <= 0 or unit not in ("saat", "gun"):
+            return {**_EMPTY_ACTION}
+        action.update({
+            "automation_sender": sender,
+            "automation_interval_value": value,
+            "automation_interval_unit": unit,
+            "automation_action": "bildir",
+        })
+        action = automations.enrich_action(action)
+
     else:
         return {**_EMPTY_ACTION}
 
@@ -634,7 +727,8 @@ def ask_with_tools(question: str, history: list[dict] | None = None,
         "\n\nGÖREV: Kullanıcının sorusunu, sana verilen mail/takvim/belge verilerine "
         "dayanarak yanıtla. Yanıtın kısa ve net olsun; gereksiz tekrar yapma.\n"
         "\nİŞLEM ARACLARI: Kullanıcı bir işlem istiyorsa (maile yanıt yaz, etkinlik "
-        "oluştur/güncelle/sil) ilgili aracı çağır. Ama şu kurallara dikkat et:\n"
+        "oluştur/güncelle/sil, 'X'ten yanıt gelmezse bildir' türünde bir otomasyon kur) ilgili "
+        "aracı çağır. Ama şu kurallara dikkat et:\n"
         "- Kullanıcı YALNIZCA soru sorduysa araç çağırma; sadece metin yanıt yaz.\n"
         "- Araç çağırırken kısa bir metin yanıtı da yaz "
         "(orn. 'Hazırladım, onaylarsan gönderiyorum.').\n"
@@ -715,5 +809,9 @@ def describe_action(action: dict) -> str:
         return f"{action.get('path')} silinecek"
     if t == "belge_yukle":
         return "Dataroom'a belge yükleme ekranı açılacak"
+    if t == "otomasyon_olustur":
+        itext = action.get("automation_interval_text") or automations.interval_text(
+            action.get("automation_interval_value") or 0, action.get("automation_interval_unit") or "gun")
+        return f"{action.get('automation_sender') or 'Gönderen'} kişisinden {itext} içinde yanıt gelmezse bildirilecek"
     return ""
 
