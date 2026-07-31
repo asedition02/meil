@@ -1,9 +1,11 @@
 """Meil — mail tasnif ve yanıt asistanı (FastAPI)."""
+import asyncio
 import datetime as dt
 import json
 import logging
 import secrets
 import time
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,12 +14,22 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import (ai, auth, bulkmail, calendar_client, config, database, dataroom,
-               donna, email_client, extract, ms_oauth)
+               donna, email_client, extract, ms_oauth, scheduler)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("meil")
 
-app = FastAPI(title="Meil — E-posta Asistanı")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(scheduler.run_forever())
+    yield
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+
+app = FastAPI(title="Meil — E-posta Asistanı", lifespan=lifespan)
 database.init_db()
 
 # CORS: arayüz aynı sunucudan servis edildiği için çapraz kaynak gerekmiyor;
