@@ -181,6 +181,24 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_date);
 
+-- Hatırlatmalar: görevlerden farklı olarak öncelik/etiket/kişi taşımayan,
+-- yalnızca metin + zamanı olan hafif bir varlık.
+CREATE TABLE IF NOT EXISTS reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    remind_at TEXT NOT NULL,         -- ISO tarih-saat
+    status TEXT DEFAULT 'bekliyor',  -- bekliyor | tamamlandi | iptal
+    related_email_id INTEGER,
+    related_file_path TEXT,
+    related_event_id INTEGER,
+    related_task_id INTEGER,
+    notified_at TEXT,                -- e-posta bildirimi gönderildi mi (tek seferlik)
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_reminders_remind_at ON reminders(remind_at);
+CREATE INDEX IF NOT EXISTS idx_reminders_status ON reminders(status);
+
 CREATE TABLE IF NOT EXISTS auth_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT DEFAULT (datetime('now')),
@@ -1485,3 +1503,112 @@ def task_counts() -> dict:
     with get_db() as db:
         rows = db.execute("SELECT status, COUNT(*) AS n FROM tasks GROUP BY status").fetchall()
     return {r["status"]: r["n"] for r in rows}
+
+
+# ---- Hatırlatmalar (Reminders) ----
+
+REMINDER_STATUSES = ("bekliyor", "tamamlandi", "iptal")
+
+_REMINDER_SELECT = """
+    SELECT r.*, e.subject AS related_email_subject,
+           COALESCE(e.sender_name, e.sender_email) AS related_email_sender,
+           ev.title AS related_event_title, ev.start AS related_event_start,
+           t.title AS related_task_title
+    FROM reminders r
+    LEFT JOIN emails e ON e.id = r.related_email_id
+    LEFT JOIN events ev ON ev.id = r.related_event_id
+    LEFT JOIN tasks t ON t.id = r.related_task_id
+"""
+
+
+def create_reminder(data: dict) -> int:
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO reminders (text, remind_at, status, related_email_id,
+                                       related_file_path, related_event_id, related_task_id)
+               VALUES (?,?,?,?,?,?,?)""",
+            (
+                (data.get("text") or "").strip(),
+                data.get("remind_at"),
+                data.get("status") or "bekliyor",
+                data.get("related_email_id") or None,
+                data.get("related_file_path") or None,
+                data.get("related_event_id") or None,
+                data.get("related_task_id") or None,
+            ),
+        )
+        return cur.lastrowid
+
+
+def list_reminders(status: str | None = None, upto: str | None = None) -> list[dict]:
+    """`upto` verilirse remind_at <= upto olanları da sınırlar (Bugün ekranı için)."""
+    query = _REMINDER_SELECT + " WHERE 1=1"
+    params = []
+    if status:
+        query += " AND r.status = ?"
+        params.append(status)
+    if upto:
+        query += " AND r.remind_at <= ?"
+        params.append(upto)
+    query += " ORDER BY r.remind_at ASC"
+    with get_db() as db:
+        rows = db.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_reminder(reminder_id: int) -> dict | None:
+    with get_db() as db:
+        row = db.execute(_REMINDER_SELECT + " WHERE r.id = ?", (reminder_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def update_reminder(reminder_id: int, **fields):
+    allowed = {"text", "remind_at", "status", "related_email_id",
+               "related_file_path", "related_event_id", "related_task_id"}
+    sets, values = ["updated_at = datetime('now')"], []
+    for key, val in fields.items():
+        if key in allowed:
+            if key == "text" and isinstance(val, str):
+                val = val.strip()
+            if key in ("related_email_id", "related_file_path",
+                       "related_event_id", "related_task_id"):
+                val = val or None
+            sets.append(f"{key} = ?")
+            values.append(val)
+    if len(sets) == 1:
+        return
+    values.append(reminder_id)
+    with get_db() as db:
+        db.execute(f"UPDATE reminders SET {', '.join(sets)} WHERE id = ?", values)
+
+
+def complete_reminder(reminder_id: int, done: bool = True):
+    with get_db() as db:
+        db.execute(
+            "UPDATE reminders SET status = ?, updated_at = datetime('now') WHERE id = ?",
+            ("tamamlandi" if done else "bekliyor", reminder_id),
+        )
+
+
+def delete_reminder(reminder_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+
+
+def due_reminders_unnotified(now_iso: str) -> list[dict]:
+    """Zamanı gelmiş ama henüz e-posta bildirimi gönderilmemiş hatırlatmalar (zamanlayıcı için)."""
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT * FROM reminders
+               WHERE status = 'bekliyor' AND remind_at <= ? AND notified_at IS NULL""",
+            (now_iso,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def mark_reminder_notified(reminder_id: int):
+    with get_db() as db:
+        db.execute(
+            "UPDATE reminders SET notified_at = datetime('now') WHERE id = ?",
+            (reminder_id,),
+        )

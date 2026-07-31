@@ -14,10 +14,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import (ai, auth, bulkmail, calendar_client, config, database, dataroom,
-               donna, email_client, extract, ms_oauth, scheduler)
+               donna, email_client, extract, ms_oauth, reminder_notify, scheduler)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("meil")
+
+scheduler.register_job("reminders", reminder_notify.notify_due_reminders)
 
 
 @asynccontextmanager
@@ -139,6 +141,20 @@ class TaskRequest(BaseModel):
 
 
 class TaskCompleteRequest(BaseModel):
+    done: bool = True
+
+
+class ReminderRequest(BaseModel):
+    text: str
+    remind_at: str                 # ISO tarih-saat (YYYY-MM-DDTHH:MM)
+    status: str = "bekliyor"       # bekliyor | tamamlandi | iptal
+    related_email_id: int | None = None
+    related_file_path: str = ""
+    related_event_id: int | None = None
+    related_task_id: int | None = None
+
+
+class ReminderCompleteRequest(BaseModel):
     done: bool = True
 
 
@@ -974,6 +990,62 @@ def remove_task(task_id: int):
     if not database.get_task(task_id):
         raise HTTPException(status_code=404, detail="Görev bulunamadı")
     database.delete_task(task_id)
+    return {"ok": True}
+
+
+# ---- Hatırlatmalar (Reminders) ----
+
+def _validate_reminder_fields(req: "ReminderRequest"):
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="Hatırlatma metni gerekli")
+    if not req.remind_at.strip():
+        raise HTTPException(status_code=400, detail="Hatırlatma zamanı gerekli")
+    if req.status not in database.REMINDER_STATUSES:
+        raise HTTPException(status_code=400, detail="Geçersiz durum")
+
+
+@app.get("/api/reminders")
+def list_reminders_endpoint(status: str = "", upto: str = ""):
+    return {"reminders": database.list_reminders(status=status or None, upto=upto or None)}
+
+
+@app.post("/api/reminders")
+def create_reminder(req: ReminderRequest):
+    _validate_reminder_fields(req)
+    reminder_id = database.create_reminder(req.model_dump())
+    return {"ok": True, "reminder": database.get_reminder(reminder_id)}
+
+
+@app.get("/api/reminders/{reminder_id}")
+def get_reminder(reminder_id: int):
+    reminder = database.get_reminder(reminder_id)
+    if not reminder:
+        raise HTTPException(status_code=404, detail="Hatırlatma bulunamadı")
+    return {"reminder": reminder}
+
+
+@app.put("/api/reminders/{reminder_id}")
+def edit_reminder(reminder_id: int, req: ReminderRequest):
+    if not database.get_reminder(reminder_id):
+        raise HTTPException(status_code=404, detail="Hatırlatma bulunamadı")
+    _validate_reminder_fields(req)
+    database.update_reminder(reminder_id, **req.model_dump())
+    return {"ok": True, "reminder": database.get_reminder(reminder_id)}
+
+
+@app.post("/api/reminders/{reminder_id}/complete")
+def toggle_reminder_complete(reminder_id: int, req: ReminderCompleteRequest):
+    if not database.get_reminder(reminder_id):
+        raise HTTPException(status_code=404, detail="Hatırlatma bulunamadı")
+    database.complete_reminder(reminder_id, req.done)
+    return {"ok": True, "reminder": database.get_reminder(reminder_id)}
+
+
+@app.delete("/api/reminders/{reminder_id}")
+def remove_reminder(reminder_id: int):
+    if not database.get_reminder(reminder_id):
+        raise HTTPException(status_code=404, detail="Hatırlatma bulunamadı")
+    database.delete_reminder(reminder_id)
     return {"ok": True}
 
 
