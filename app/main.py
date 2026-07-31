@@ -1549,6 +1549,7 @@ class DonnaActionRequest(BaseModel):
     location: str = ""
     notes: str = ""
     path: str = ""
+    memory_text: str = ""
 
 
 @app.post("/api/donna/act")
@@ -1590,6 +1591,12 @@ def donna_act(req: DonnaActionRequest):
             raise HTTPException(status_code=400, detail="Dosya yolu gerekli")
         dataroom_delete(req.path)
         return {"ok": True, "message": "Belge silindi"}
+
+    if t == "hafiza_ekle":
+        if not req.memory_text.strip():
+            raise HTTPException(status_code=400, detail="Hatırlanacak bilgi boş olamaz")
+        database.create_memory(req.memory_text)
+        return {"ok": True, "message": "Hatırladım"}
 
     raise HTTPException(status_code=400, detail=f"Bilinmeyen işlem: {t}")
 
@@ -1659,6 +1666,29 @@ def delete_donna_conversation(conversation_id: int):
     if not database.get_conversation(conversation_id):
         raise HTTPException(status_code=404, detail="Konuşma bulunamadı")
     database.delete_conversation(conversation_id)
+    return {"ok": True}
+
+
+class MemoryRequest(BaseModel):
+    content: str
+
+
+@app.get("/api/memories")
+def list_memories():
+    return {"memories": database.list_memories()}
+
+
+@app.post("/api/memories")
+def create_memory_endpoint(req: MemoryRequest):
+    if not req.content.strip():
+        raise HTTPException(status_code=400, detail="İçerik boş olamaz")
+    database.create_memory(req.content, source="elle")
+    return {"ok": True, "memories": database.list_memories()}
+
+
+@app.delete("/api/memories/{memory_id}")
+def delete_memory_endpoint(memory_id: int):
+    database.delete_memory(memory_id)
     return {"ok": True}
 
 

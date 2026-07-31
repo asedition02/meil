@@ -2763,7 +2763,7 @@ $("#twofa-btn").onclick = openTwofa;
 
 // ---- Donna (asistan paneli) ----
 
-const donna = { open: false, loading: false, conversationId: null, conversations: [], briefed: false };
+const donna = { open: false, loading: false, conversationId: null, conversations: [], memories: [], briefed: false };
 
 function donnaOpen() {
   donna.open = true;
@@ -2787,6 +2787,7 @@ $("#donna-close").onclick = donnaClose;
 $("#donna-scrim").onclick = donnaClose;
 $("#donna-refresh").onclick = () => { donna.briefed = false; loadDonnaBrief(); };
 $("#donna-history-btn").onclick = loadDonnaConversations;
+$("#donna-memory-btn").onclick = loadDonnaMemories;
 
 const URGENCY = { acil: "u-high", normal: "u-mid", bilgi: "u-low" };
 const KIND_ICON = { mail: "✉️", etkinlik: "📅", fatura: "🧾", hatirlatma: "🔔" };
@@ -3008,6 +3009,61 @@ async function openDonnaConversation(id) {
   }
 }
 
+// --- Donna: hafıza yönetimi ---
+
+async function loadDonnaMemories() {
+  const body = $("#donna-body");
+  setDonnaChips([]);
+  body.innerHTML = `<div class="donna-loading"><span></span><span></span><span></span> Hafıza yükleniyor…</div>`;
+  try {
+    const r = await api("/api/memories");
+    donna.memories = r.memories;
+    renderDonnaMemoryList();
+  } catch (e) {
+    body.innerHTML = `<p class="auth-error donna-err">${esc(e.message)}</p>`;
+  }
+}
+
+function renderDonnaMemoryList() {
+  const body = $("#donna-body");
+  const rows = donna.memories.map((m) => `
+    <div class="donna-conv-row donna-mem-row" data-mem-row="${m.id}">
+      <div class="donna-conv-open"><span>${esc(m.content)}</span></div>
+      <button class="icon-btn donna-conv-delete" data-mem-delete="${m.id}" title="Sil">${MI.x}</button>
+    </div>`).join("");
+  body.innerHTML = `
+    <div class="donna-conv-list">
+      <form id="donna-mem-add" class="donna-inputrow">
+        <input id="donna-mem-input" placeholder="Hatırlanacak bir şey ekle…" maxlength="500">
+        <button type="submit" class="pill accent">Ekle</button>
+      </form>
+      ${rows || '<p class="donna-calm">Henüz bir şey hatırlamıyorum.</p>'}
+    </div>`;
+  $("#donna-mem-add").onsubmit = async (e) => {
+    e.preventDefault();
+    const input = $("#donna-mem-input");
+    const content = input.value.trim();
+    if (!content) return;
+    try {
+      await api("/api/memories", { method: "POST", body: JSON.stringify({ content }) });
+      input.value = "";
+      loadDonnaMemories();
+    } catch (err) { toast(err.message, true); }
+  };
+  body.querySelectorAll("[data-mem-delete]").forEach((btn) => {
+    btn.onclick = () => deleteDonnaMemory(parseInt(btn.dataset.memDelete, 10));
+  });
+}
+
+async function deleteDonnaMemory(id) {
+  if (!confirm("Bu hatırlanan bilgi silinsin mi?")) return;
+  try {
+    await api(`/api/memories/${id}`, { method: "DELETE" });
+    toast("Silindi");
+    loadDonnaMemories();
+  } catch (err) { toast(err.message, true); }
+}
+
 // --- Donna'nın hazırladığı işlem: onay kartı ---
 
 const ACTION_META = {
@@ -3017,6 +3073,7 @@ const ACTION_META = {
   etkinlik_sil:      ["🗑️", "Etkinliği sil", "Sil"],
   belge_sil:         ["🗑️", "Belgeyi sil", "Sil"],
   belge_yukle:       ["📎", "Belge yükle", "Yükleme ekranını aç"],
+  hafiza_ekle:       ["🧠", "Hatırla", "Hatırla"],
 };
 
 function renderDonnaAction(a) {
@@ -3043,6 +3100,8 @@ function renderDonnaAction(a) {
     fields = `<div class="da-line"><b>${esc(a.event_title || "")}</b> · ${esc(a.event_when || "")}</div>`;
   } else if (a.type === "belge_sil") {
     fields = `<div class="da-line"><code>${esc(a.path || "")}</code></div>`;
+  } else if (a.type === "hafiza_ekle") {
+    fields = `<textarea class="da-input da-text" rows="2" data-f="memory_text">${esc(a.memory_text || "")}</textarea>`;
   }
 
   donnaAppend(`

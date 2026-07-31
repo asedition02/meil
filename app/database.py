@@ -241,6 +241,17 @@ CREATE TABLE IF NOT EXISTS donna_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_donna_msg_conv ON donna_messages(conversation_id, id);
 
+-- Donna'nın hatırladığı kullanıcı bilgileri: yalnızca kullanıcı açıkça
+-- "bunu hatırla" dediğinde (onay kartı üzerinden) veya elle eklenir; her
+-- Donna yanıtının bağlamına dahil edilir.
+CREATE TABLE IF NOT EXISTS donna_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    source TEXT DEFAULT 'kullanici_komutu',  -- kullanici_komutu | elle
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_donna_memories_created ON donna_memories(created_at DESC);
+
 CREATE TABLE IF NOT EXISTS auth_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT DEFAULT (datetime('now')),
@@ -1840,3 +1851,27 @@ def get_conversation_messages(conversation_id: int, limit: int = 20) -> list[dic
             d["sources"] = []
         out.append(d)
     return out
+
+
+# ---- Donna hafızası ----
+
+def create_memory(content: str, source: str = "kullanici_komutu") -> int:
+    with get_db() as db:
+        cur = db.execute(
+            "INSERT INTO donna_memories (content, source) VALUES (?, ?)",
+            (content.strip()[:500], source),
+        )
+        return cur.lastrowid
+
+
+def list_memories() -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT * FROM donna_memories ORDER BY created_at DESC, id DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_memory(memory_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM donna_memories WHERE id = ?", (memory_id,))
