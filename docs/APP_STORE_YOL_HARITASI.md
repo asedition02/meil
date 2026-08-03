@@ -61,3 +61,71 @@ Sıralı ön koşullar; her biri ayrı iş kalemi:
   çöpe gitmez (aynı API, aynı arayüz).
 - Aşama 3'e başlamadan önce ürün/fiyat kararı verilmelidir; CASA denetimi ve
   barındırma, yıllık sabit maliyet getirir.
+
+## App Store gönderim kontrol listesi (Capacitor iOS sarmalayıcı — `mobile/`)
+
+Bu bölüm, tek kullanıcılı/kişisel dağıtım için Capacitor iOS sarmalayıcısının
+mağazaya (App Store Connect üzerinden — açık liste veya TestFlight) gönderilmeye
+hazır olup olmadığını izler.
+
+### Tamamlanan teknik hazırlık
+
+- [x] Xcode projesi (`mobile/ios/App`) mevcut; simülatörde temiz kurulumla
+      derlendi ve test edildi (`xcodebuild ... -sdk iphonesimulator` başarılı).
+- [x] `Info.plist`: `NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription`,
+      `NSFaceIDUsageDescription` dolu; `ITSAppUsesNonExemptEncryption = false`
+      (yalnızca standart HTTPS/TLS kullanıldığından ihracat uyum sorusu boş kalmaz).
+- [x] `PrivacyInfo.xcprivacy` eklendi (App hedefi) — Apple'ın 2024'ten beri
+      zorunlu tuttuğu gizlilik bildirim dosyası; izleme yok, "required reason"
+      API'lerden yalnızca `UserDefaults` (CA92.1) beyan edildi.
+- [x] Gizlilik politikası (`static/privacy.html`, `meil.tr/privacy.html`) —
+      tarih ve iletişim adresi dolduruldu (aagoksu02@gmail.com).
+- [x] Destek sayfası eklendi (`static/support.html`, `meil.tr/support.html`) —
+      App Store Connect'in zorunlu "Support URL" alanı için.
+- [x] Temiz kurulumda telefon genişliğinde (402pt) doğrulandı: alt sekme
+      çubuğu, tek panelli Posta görünümü ve PIN kilidi ekranı beklendiği gibi
+      çalışıyor. (Not: aynı simülatörde önceden yapılmış eski bir test
+      oturumundan kalan WKWebView önbelleği, bir kez masaüstü düzeni
+      göstermişti — uygulamayı silip yeniden kurunca düzeldi; kod tarafında
+      bir hata değildi.)
+- [x] `mobile/package.json` içindeki `sync`/`open:ios` script'leri güncel;
+      `npx cap sync ios` sonrası proje sorunsuz derleniyor.
+
+### Kullanıcının (Ahmet) tamamlaması gereken adımlar
+
+Bunlar bir ajanın yapamayacağı, hesap/karar gerektiren adımlardır:
+
+1. **Apple Developer Program üyeliği** (99 $/yıl) — apple.com/developer üzerinden.
+2. **Xcode imzalama**: `mobile/ios/App` içinde Xcode'da projeyi açıp
+   (`npm run open:ios`), hedef → Signing & Capabilities → kendi Team'ini seçmek
+   (şu an `CODE_SIGN_STYLE = Automatic`, Team boş).
+3. **Bundle ID kaydı**: `tr.meil.app` Apple Developer portalında kayıtlı
+   olmalı (Team seçilince Xcode otomatik önerir).
+4. **App Store Connect kaydı**: Yeni uygulama oluştur (adı, kategori, birincil
+   dil, fiyatlandırma — muhtemelen ücretsiz).
+5. **Gizlilik "nutrition label"**: App Store Connect'te App Privacy formu —
+   toplanan veri tipleri (e-posta içeriği, hesap kimlik bilgileri vb.) ve
+   kullanım amaçları (uygulama işlevselliği; üçüncü taraf reklam/izleme yok)
+   beyan edilmeli. `static/privacy.html` bu beyanla tutarlı olmalı.
+6. **Ekran görüntüleri**: En az 6.7" (veya 6.9", cihaza göre) iPhone ekran
+   görüntüleri gerekli. Gerçek/anlamlı veri içeren ekran görüntüleri Apple
+   tarafından tercih edilir; **kendi hesabınızla** simülatörde veya cihazda
+   çekilmeli (bu ajan, kişisel mail içeriğini ifşa etmemek için otomatik
+   ekran görüntüsü üretmedi — yalnızca teknik doğrulama için görüntü aldı ve
+   sildi).
+7. **İnceleme notları / demo hesap**: Uygulama girişte parola/PIN istiyor.
+   Apple incelemecisinin test edebilmesi için App Store Connect'in
+   "App Review Information" bölümüne çalışan bir demo PIN'i veya test hesabı
+   bilgisi eklenmeli.
+8. **Guideline 4.2 (Minimum Functionality) riski**: Uygulama esasen
+   `meil.tr` sunucusuna bağlanan bir WKWebView sarmalayıcısıdır. Face ID/PIN
+   kilidi ve native splash/status bar gibi eklentiler bir miktar native değer
+   katıyor, ama Apple incelemesi "sadece web sitesi" gerekçesiyle reddedebilir.
+   Red gelirse itiraz metninde native eklentiler (biyometrik kilit, push
+   bildirim potansiyeli vb.) vurgulanmalı.
+9. **Guideline 5.1.1(v) (Hesap silme)**: Uygulama içinde "Meil hesabı" diye bir
+   kayıt akışı yok (tek kullanıcı, sunucu sahibi zaten siz); yalnızca bağlı
+   mail hesapları eklenip kaldırılabiliyor. İnceleme notlarında bu modelin
+   (tek kullanıcılı, kendi sunucunuz) açıkça belirtilmesi reddi önleyebilir.
+10. **Submit for Review** — yukarıdakiler tamamlanınca App Store Connect'ten
+    gönderim.
