@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from . import (ai, auth, automations, awaiting_reply_notify, bulkmail, calendar_client,
                config, database, dataroom, donna, email_client, extract, ms_oauth,
-               reminder_notify, scheduler)
+               push_notify, reminder_notify, scheduler)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("meil")
@@ -1765,6 +1765,40 @@ def mark_notification_read(notification_id: int):
 @app.post("/api/notifications/read-all")
 def mark_all_notifications_read():
     database.mark_all_notifications_read()
+    return {"ok": True}
+
+
+# ---- Web Push bildirimleri ----
+
+@app.get("/api/push/vapid-public-key")
+def push_vapid_public_key():
+    """Frontend'in PushManager.subscribe({applicationServerKey}) için kullanacağı anahtar."""
+    return {"key": push_notify.vapid_public_key()}
+
+
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscriptionRequest(BaseModel):
+    endpoint: str
+    keys: PushSubscriptionKeys
+
+
+@app.post("/api/push/subscribe")
+def push_subscribe(req: PushSubscriptionRequest):
+    database.save_push_subscription(req.endpoint, req.keys.p256dh, req.keys.auth)
+    return {"ok": True}
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str
+
+
+@app.post("/api/push/unsubscribe")
+def push_unsubscribe(req: PushUnsubscribeRequest):
+    database.delete_push_subscription(req.endpoint)
     return {"ok": True}
 
 

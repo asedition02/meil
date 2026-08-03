@@ -14,7 +14,7 @@ edebilsin diye kendi dosyasında yaşıyor.
 import datetime as dt
 import logging
 
-from . import database, email_client
+from . import database, email_client, push_notify
 
 log = logging.getLogger("meil.awaiting_replies")
 
@@ -37,13 +37,18 @@ def resolve_and_notify():
         return
     for r in due:
         who = r["to_name"] or r["to_email"]
+        title = f"Hâlâ cevap bekliyor: {who}"
+        body = (f'{who} kişisine gönderdiğiniz "{r["subject"]}" konulu maile '
+                f"henüz yanıt gelmedi.\n\n— Meil")
         try:
-            email_client.send_message(
-                account, account["email"], f"Hâlâ cevap bekliyor: {who}",
-                f'{who} kişisine gönderdiğiniz "{r["subject"]}" konulu maile '
-                f"henüz yanıt gelmedi.\n\n— Meil",
-            )
+            email_client.send_message(account, account["email"], title, body)
         except Exception:
             log.exception("Cevap-bekleme bildirimi gönderilemedi (id=%s)", r["id"])
             continue
+        try:
+            push_notify.send_push(
+                title, f'"{r["subject"]}" konulu maile henüz yanıt gelmedi.'
+            )
+        except Exception:
+            log.exception("Cevap-bekleme push bildirimi gönderilemedi (id=%s)", r["id"])
         database.mark_awaiting_reply_notified(r["id"])

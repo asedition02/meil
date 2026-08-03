@@ -30,7 +30,10 @@ adımlarını, mevcut durumla birlikte izler.
 - [ ] TLS: alan adı + ters proxy (Caddy önerilir — otomatik Let's Encrypt);
       çerezlere `Secure` bayrağı eklenir
 - [ ] iPhone'da Safari → Paylaş → **Ana Ekrana Ekle** (uygulama ikonu ve tam ekran hazır)
-- [ ] (İsteğe bağlı) Web Push bildirimleri — iOS 16.4+ PWA'larda destekleniyor
+- [x] (İsteğe bağlı) Web Push bildirimleri — iOS 16.4+ PWA'larda destekleniyor
+      (VAPID anahtarları otomatik üretilir; hatırlatma/cevap-bekleme/otomasyon
+      bildirimleri e-postanın yanı sıra push olarak da gönderilir — bkz.
+      `app/push_notify.py`, Ayarlar menüsü → "Bildirimler")
 
 ## Aşama 3 — Ticari ürün (SaaS + mağaza uygulaması)
 

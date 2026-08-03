@@ -2793,6 +2793,90 @@ function renderTwofaOn(st) {
 
 $("#twofa-btn").onclick = openTwofa;
 
+// ---- Web Push bildirimleri ----
+// Hatırlatma, cevap-bekleme ve Donna otomasyon bildirimlerini e-postanın
+// yanı sıra telefona (iOS 16.4+ Safari'de "Ana Ekrana Ekle" ile kurulmuş
+// PWA dahil) anlık bildirim olarak da düşürür. Sunucu tarafı: app/push_notify.py.
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+async function getPushSubscription() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+async function refreshPushMenuTag() {
+  const tag = $("#push-state");
+  if (!tag) return;
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    tag.textContent = "Desteklenmiyor";
+    return;
+  }
+  const sub = await getPushSubscription().catch(() => null);
+  const on = !!sub && Notification.permission === "granted";
+  tag.textContent = on ? "Açık" : "Kapalı";
+  tag.classList.toggle("on", on);
+}
+
+async function enablePush() {
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    toast("Bildirim izni verilmedi", true);
+    return;
+  }
+  const reg = await navigator.serviceWorker.ready;
+  const { key } = await api("/api/push/vapid-public-key");
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(key),
+  });
+  const json = sub.toJSON();
+  await api("/api/push/subscribe", {
+    method: "POST",
+    body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
+  });
+  toast("Bildirimler açıldı");
+}
+
+async function disablePush() {
+  const sub = await getPushSubscription();
+  if (sub) {
+    await api("/api/push/unsubscribe", {
+      method: "POST",
+      body: JSON.stringify({ endpoint: sub.endpoint }),
+    }).catch(() => { /* sunucudan silinemese de yerelde iptal edilir */ });
+    await sub.unsubscribe();
+  }
+  toast("Bildirimler kapatıldı");
+}
+
+async function togglePush() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    toast("Bu tarayıcı push bildirimlerini desteklemiyor", true);
+    return;
+  }
+  const btn = $("#push-btn");
+  btn.disabled = true;
+  try {
+    const sub = await getPushSubscription();
+    if (sub) await disablePush(); else await enablePush();
+    await refreshPushMenuTag();
+  } catch (e) {
+    toast(e.message || "Bildirim ayarı değiştirilemedi", true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("#push-btn").onclick = togglePush;
+refreshPushMenuTag();
+
 // ---- Donna (asistan paneli) ----
 
 const donna = { open: false, loading: false, history: [], briefed: false, notifications: [], conversationId: null, conversations: [], memories: [] };
@@ -3452,7 +3536,7 @@ $("#log-btn").onclick = openSecurityLog;
   avatar.onclick = (e) => {
     e.stopPropagation();
     menu.hidden = !menu.hidden;
-    if (!menu.hidden) { refreshTwofaMenuTag(); refreshAiMenuTag(); }
+    if (!menu.hidden) { refreshTwofaMenuTag(); refreshAiMenuTag(); refreshPushMenuTag(); }
   };
   menu.onclick = (e) => e.stopPropagation();
   document.addEventListener("click", () => { menu.hidden = true; });

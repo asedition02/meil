@@ -13,8 +13,11 @@ Onay olmadan hiçbir mail gönderilmez / silinmez — bu modülün tek etkisi bi
 uygulama içi bildirim oluşturmaktır.
 """
 import datetime as dt
+import logging
 
-from . import database
+from . import database, push_notify
+
+log = logging.getLogger("meil.automations")
 
 INTERVAL_UNITS = ("saat", "gun")
 UNIT_LABELS = {"saat": "saat", "gun": "gün"}
@@ -201,6 +204,10 @@ def check_due() -> list[dict]:
         title = f"{who} yanıt vermedi"
         body = f"{who} kişisinden {itext} içinde yanıt gelmedi."
         nid = database.create_notification(auto["id"], title, body)
+        try:
+            push_notify.send_push(title, body)
+        except Exception:
+            log.exception("Otomasyon push bildirimi gönderilemedi (id=%s)", auto["id"])
         database.update_automation(
             auto["id"], waiting_since=None,
             last_triggered_at=now.isoformat(timespec="seconds"),

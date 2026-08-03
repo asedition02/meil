@@ -249,6 +249,37 @@ class TestDonnaAsk:
 
 
 # =========================================================================
+# 4b. Web Push abonelik uçları (/api/push/*)
+# =========================================================================
+
+class TestPushEndpoints:
+    def test_vapid_public_key_returned(self, client):
+        r = client.get("/api/push/vapid-public-key")
+        assert r.status_code == 200
+        assert isinstance(r.json()["key"], str) and r.json()["key"]
+
+    def test_subscribe_then_unsubscribe(self, client):
+        sub = {
+            "endpoint": "https://push.example.com/test-endpoint",
+            "keys": {"p256dh": "p256dh-value", "auth": "auth-value"},
+        }
+        r = client.post("/api/push/subscribe", json=sub)
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+        from app import database
+        assert len(database.list_push_subscriptions()) == 1
+
+        r = client.post("/api/push/unsubscribe", json={"endpoint": sub["endpoint"]})
+        assert r.status_code == 200
+        assert database.list_push_subscriptions() == []
+
+    def test_subscribe_missing_keys_returns_422(self, client):
+        r = client.post("/api/push/subscribe", json={"endpoint": "https://x"})
+        assert r.status_code == 422
+
+
+# =========================================================================
 # 5. Donna işlem uygulama (/api/donna/act) — hata yolları
 # =========================================================================
 

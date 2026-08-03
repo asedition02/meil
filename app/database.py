@@ -295,6 +295,18 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read);
+
+-- Web Push abonelikleri: tarayıcının PushManager.subscribe() çağrısından
+-- gelen bilgiler. Tek kullanıcılı uygulama ama birden fazla cihaz/tarayıcı
+-- (telefon + masaüstü gibi) aynı anda abone olabilir — bu yüzden endpoint
+-- başına bir satır; hesap/kullanıcı ayrımı yok.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    endpoint TEXT UNIQUE NOT NULL,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
 """
 
 
@@ -1840,6 +1852,31 @@ def mark_notification_read(notification_id: int):
 def mark_all_notifications_read():
     with get_db() as db:
         db.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0")
+
+
+# ---- Web Push abonelikleri ----
+
+def save_push_subscription(endpoint: str, p256dh: str, auth: str):
+    """Yeni abonelik ekler; aynı endpoint zaten kayıtlıysa anahtarlarını günceller."""
+    with get_db() as db:
+        db.execute(
+            """INSERT INTO push_subscriptions (endpoint, p256dh, auth)
+               VALUES (?, ?, ?)
+               ON CONFLICT(endpoint) DO UPDATE SET
+                   p256dh = excluded.p256dh, auth = excluded.auth""",
+            (endpoint, p256dh, auth),
+        )
+
+
+def delete_push_subscription(endpoint: str):
+    with get_db() as db:
+        db.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+
+
+def list_push_subscriptions() -> list[dict]:
+    with get_db() as db:
+        rows = db.execute("SELECT * FROM push_subscriptions ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
 
 
 def mark_reminder_notified(reminder_id: int):
