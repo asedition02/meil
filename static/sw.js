@@ -1,6 +1,6 @@
 /* Meil service worker — uygulama kabuğunu önbelleğe alır (PWA).
    API istekleri her zaman ağa gider; kabuk dosyaları önce önbellekten gelir. */
-const CACHE = "meil-shell-v3";
+const CACHE = "meil-shell-v4";
 const SHELL = ["/app", "/style.css", "/app.js", "/manifest.json",
                "/icons/icon-192.png", "/icons/icon-512.png"];
 
