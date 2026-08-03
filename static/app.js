@@ -48,6 +48,7 @@ function avatarHtml(name, email, cls = "") {
 
 // Posta SVG ikonları (Lucide tarzı — emoji yerine, skill kuralı)
 const MI = {
+  back: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m15 18-6-6 6-6"/></svg>',
   chevron: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg>',
   inbox: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5 5h14l3 7v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-6l3-7Z"/></svg>',
   star: (on) => `<svg width="13" height="13" viewBox="0 0 24 24" fill="${on ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2"><path d="m12 3 2.7 5.6 6.3.9-4.5 4.4 1 6.1L12 17.2 6.5 20l1-6.1L3 9.5l6.3-.9L12 3Z"/></svg>`,
@@ -192,6 +193,8 @@ document.querySelectorAll(".rail-btn").forEach((btn) => {
   btn.onclick = () => {
     document.querySelectorAll(".rail-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
+    closeMobileDetail();
+    $("#view-dataroom")?.classList.remove("folders-open", "inspector-open");
     const view = btn.dataset.view;
     ["today", "inbox", "calendar", "dataroom", "bulk", "tasks", "accounts"].forEach((v) => {
       const elem = $(`#view-${v}`);
@@ -369,7 +372,7 @@ async function archiveEmail(id) {
   try {
     await api(`/api/emails/${id}/archive`, { method: "POST" });
     toast("Arşivlendi");
-    if (state.selectedId === id) state.selectedId = null;
+    if (state.selectedId === id) { state.selectedId = null; closeMobileDetail(); }
     loadEmails();
   } catch (e) { toast(e.message, true); }
 }
@@ -383,8 +386,15 @@ async function toggleStar(id) {
   renderList();
 }
 
+// Mobilde detay tam ekran açılır; geri dönmek veya listeye dönen bir işlem
+// (arşivle, ertele, okunmadı yap) bu sınıfı kaldırır.
+function closeMobileDetail() {
+  $("#view-inbox")?.classList.remove("mail-detail-open");
+}
+
 async function selectEmail(id) {
   state.selectedId = id;
+  $("#view-inbox")?.classList.add("mail-detail-open");
   const t = await api(`/api/emails/${id}/thread`);
   const msgs = t.messages;
   const e = msgs.find((m) => m.id === id) || msgs[msgs.length - 1];
@@ -433,6 +443,7 @@ function renderDetail(e, threadMsgs = []) {
   $("#detail-panel").innerHTML = `
     <header class="mv-head">
       <div class="mv-title-row">
+        <button class="icon-btn detail-back" id="detail-back-btn" title="Listeye dön" aria-label="Listeye dön">${MI.back || "←"}</button>
         <h1 class="mv-subject">${esc(e.subject)}</h1>
         <div class="mv-tools">
           <button class="icon-btn${e.starred ? " on" : ""}" id="d-star" title="Yıldızla (s)" aria-label="Yıldızla">${MI.star(e.starred)}</button>
@@ -522,6 +533,8 @@ function renderDetail(e, threadMsgs = []) {
       </div>
     </footer>
   `;
+
+  $("#detail-back-btn").onclick = closeMobileDetail;
 
   // Yanıt alanı: kapalı başlar, tıklayınca açılır (gerçek mail uygulaması gibi)
   const openReply = () => {
@@ -617,12 +630,14 @@ function renderDetail(e, threadMsgs = []) {
       body: JSON.stringify({ value: false }) });
     toast("Okunmadı olarak işaretlendi");
     state.selectedId = null;
+    closeMobileDetail();
     loadEmails();
   };
   $("#d-archive").onclick = async () => {
     const action = e.status === "archived" ? "unarchive" : "archive";
     await api(`/api/emails/${e.id}/${action}`, { method: "POST" });
     toast(action === "archive" ? "Arşivlendi" : "Gelen kutusuna taşındı");
+    if (action === "archive") { state.selectedId = null; closeMobileDetail(); }
     loadEmails();
   };
   $("#d-snooze").onclick = () => openSnoozeModal(e);
@@ -691,6 +706,7 @@ function openSnoozeModal(e) {
     toast(until ? "Mail ertelendi" : "Erteleme kaldırıldı");
     closeModal();
     state.selectedId = null;
+    closeMobileDetail();
     loadEmails();
   };
   document.querySelectorAll("[data-snooze]").forEach((btn) => {
@@ -1163,9 +1179,21 @@ function renderDrTree() {
   }
   $("#dr-tree").innerHTML = rows.join("");
   $("#dr-tree").querySelectorAll(".dr-folder").forEach((el) => {
-    el.onclick = () => { dr.folder = el.dataset.folder; renderDrTree(); renderDataroom(); };
+    el.onclick = () => {
+      dr.folder = el.dataset.folder;
+      renderDrTree();
+      renderDataroom();
+      $("#view-dataroom")?.classList.remove("folders-open");
+    };
   });
 }
+
+$("#dr-folders-toggle")?.addEventListener("click", () => {
+  $("#view-dataroom")?.classList.toggle("folders-open");
+});
+$("#dr-side-close")?.addEventListener("click", () => {
+  $("#view-dataroom")?.classList.remove("folders-open");
+});
 
 const DR_ACT_LABELS = {
   upload: "yüklendi", delete: "silindi", note: "not güncellendi",
@@ -1387,6 +1415,7 @@ function closeInspector() {
   dr.inspectorPath = null;
   $("#dr-inspector").style.display = "none";
   $("#dr-inspector").innerHTML = "";
+  $("#view-dataroom")?.classList.remove("inspector-open");
   renderDataroom();
 }
 
@@ -1395,6 +1424,7 @@ async function openInspector(file, rerenderTable = true) {
   if (rerenderTable) renderDataroom();
   const panel = $("#dr-inspector");
   panel.style.display = "flex";
+  $("#view-dataroom")?.classList.add("inspector-open");
   const shareInfo = file.share_token
     ? `<div class="dr-share-live">
         <span class="dr-shared">${DRI.link} Paylaşımda</span>
@@ -3925,4 +3955,69 @@ async function bootApp() {
   if (!st.setup) { showAuthOverlay("setup"); return; }
   if (!st.authed) { showAuthOverlay("login"); return; }
   bootApp();
+})();
+
+// ---- Native (Capacitor/iOS) entegrasyonu: arka plandan dönüşte Face ID kilidi ----
+// PWA/web'de window.Capacitor tanımsız olduğu için bu blok hiçbir şey yapmadan çıkar.
+(function initNativeLock() {
+  const Cap = window.Capacitor;
+  if (!Cap || !Cap.isNativePlatform || !Cap.isNativePlatform()) return;
+  const { App: NativeApp, StatusBar, BiometricAuth } = Cap.Plugins || {};
+  if (StatusBar) StatusBar.setStyle({ style: "DARK" }).catch(() => {});
+  if (!NativeApp || !BiometricAuth) return;
+
+  function authOverlayOpen() {
+    const el = document.getElementById("auth-overlay");
+    return !!el && el.style.display === "flex";
+  }
+
+  function showNativeLock() {
+    let el = document.getElementById("native-lock-overlay");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "native-lock-overlay";
+      el.style.cssText =
+        "position:fixed;inset:0;z-index:99999;display:flex;align-items:center;" +
+        "justify-content:center;flex-direction:column;gap:16px;background:#f8fafc;";
+      el.innerHTML =
+        '<span style="font-size:40px">🔒</span>' +
+        '<p style="font:600 15px system-ui;color:#0a1122;margin:0">Meil kilitli</p>' +
+        '<button id="native-unlock-btn" style="padding:10px 22px;border:0;border-radius:999px;' +
+        'background:#2563eb;color:#fff;font:600 14px system-ui;">Face ID ile Aç</button>';
+      document.body.appendChild(el);
+      document.getElementById("native-unlock-btn").onclick = tryNativeUnlock;
+    }
+    el.style.display = "flex";
+  }
+
+  function hideNativeLock() {
+    const el = document.getElementById("native-lock-overlay");
+    if (el) el.style.display = "none";
+  }
+
+  async function tryNativeUnlock() {
+    try {
+      await BiometricAuth.authenticate({
+        reason: "Meil'i açmak için doğrulayın",
+        cancelTitle: "Vazgeç",
+        allowDeviceCredential: true,
+        iosFallbackTitle: "Parola kullan",
+      });
+      hideNativeLock();
+    } catch {
+      // İptal edildi ya da başarısız oldu — kilitli ekranda kal, kullanıcı tekrar deneyebilir.
+    }
+  }
+
+  NativeApp.addListener("appStateChange", async ({ isActive }) => {
+    if (!isActive || authOverlayOpen()) return;
+    try {
+      const check = await BiometricAuth.checkBiometry();
+      if (!check.isAvailable) return; // Face ID/Touch ID kurulu değilse native kilit atlanır
+    } catch {
+      return;
+    }
+    showNativeLock();
+    tryNativeUnlock();
+  });
 })();

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meil — Gizlilik Politikası</title>
+<meta name="robots" content="index,follow">
+<link rel="icon" href="/icons/icon-192.png">
+<style>
+  :root{ --bg:#f6f8fc; --panel:#ffffff; --line:#e3e9f4; --ink:#0a1122; --muted:#54607a; --brand:#2563eb; }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#0b1120; --panel:#111a2e; --line:#22304a; --ink:#eef2fb; --muted:#93a1bd; --brand:#5b8def; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+  .wrap{max-width:760px;margin:0 auto;padding:48px 20px 96px}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:28px}
+  .brand-mark{width:36px;height:36px;border-radius:10px;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700}
+  h1{font-size:1.7rem;margin:0 0 4px}
+  .updated{color:var(--muted);font-size:.9rem;margin-bottom:32px}
+  h2{font-size:1.15rem;margin:36px 0 10px;border-bottom:1px solid var(--line);padding-bottom:8px}
+  p,li{color:var(--muted)}
+  ul{padding-left:20px}
+  .placeholder{background:rgba(37,99,235,.1);border:1px dashed var(--brand);border-radius:8px;padding:2px 8px;color:var(--ink);font-family:ui-monospace,monospace;font-size:.85em}
+  .note{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:24px 0}
+  a{color:var(--brand)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><span class="brand-mark">M</span><strong>Meil</strong></div>
+  <h1>Gizlilik Politikası</h1>
+  <p class="updated">Son güncelleme: <span class="placeholder">GG.AA.YYYY</span></p>
+
+  <div class="note">
+    <strong>Önemli:</strong> Meil, <span class="placeholder">[işletmen / adın]</span> tarafından işletilen
+    <strong>tek kullanıcılı, kendi kendine barındırılan</strong> bir e-posta asistanıdır. Bu kurulumun
+    veri sorumlusu Meil'in geliştiricisi değil, bu örneği çalıştıran ve hesabı kullanan kişidir/kuruluştur.
+    Sorularınız için: <span class="placeholder">gizlilik@ornek-alan-adi.tr</span>
+  </div>
+
+  <h2>1. Hangi veriler işlenir?</h2>
+  <ul>
+    <li><strong>Mail hesabı kimlik bilgileri</strong> — IMAP/SMTP kullanıcı adı ve parolası (veya OAuth erişim jetonu),
+      sunucu tarafında Fernet/AES ile şifrelenmiş biçimde saklanır.</li>
+    <li><strong>Mail içerikleri</strong> — konu, gönderen, gövde metni ve ekler; tasnif/özetleme/yanıt taslağı
+      üretmek amacıyla seçtiğiniz yapay zekâ sağlayıcısına (Google Gemini, NVIDIA NIM ve/veya Anthropic Claude)
+      iletilir. Bu sağlayıcıların kendi gizlilik politikaları geçerlidir.</li>
+    <li><strong>Takvim verileri</strong> — Apple iCloud (uygulama şifresiyle, okuma+yazma) ve/veya Google Takvim
+      (salt okunur, gizli iCal adresiyle) etkinlikleri.</li>
+    <li><strong>Dataroom belgeleri</strong> — mail ekleri ve manuel yüklenen dosyalar, sunucunun yerel diskinde saklanır.</li>
+    <li><strong>Uygulama PIN'i</strong> — düz metin olarak hiçbir yerde tutulmaz; PBKDF2-SHA256 ile
+      özetlenerek saklanır.</li>
+    <li><strong>Oturum çerezi</strong> — HttpOnly, cihazda 30 gün geçerli; üçüncü taraflarla paylaşılmaz.</li>
+  </ul>
+
+  <h2>2. Veriler nerede saklanır?</h2>
+  <p>Tüm veriler yalnızca bu Meil örneğinin çalıştığı sunucuda (<span class="placeholder">meil.tr</span>) yerel
+    SQLite veritabanında ve dosya sisteminde tutulur. Meil'in geliştiricisine veya üçüncü bir barındırma
+    şirketine veri aktarımı yapılmaz — istisnası, tasnif/özet/yanıt taslağı üretmek için gönderilen mail
+    içeriğinin seçili yapay zekâ sağlayıcısına iletilmesidir.</p>
+
+  <h2>3. Veriler kimlerle paylaşılır?</h2>
+  <ul>
+    <li>Seçtiğiniz yapay zekâ sağlayıcısı (yalnızca tasnif/özet/yanıt taslağı için gönderilen mail metni).</li>
+    <li>Mail sağlayıcınız (Gmail, Outlook/Microsoft 365, Yahoo, Yandex veya kurumsal IMAP/SMTP sunucunuz) —
+      yalnızca kendi hesabınıza bağlanmak için.</li>
+    <li>Başka hiçbir üçüncü tarafla veri paylaşılmaz veya satılmaz.</li>
+  </ul>
+
+  <h2>4. Veri saklama ve silme</h2>
+  <p>Veriler, hesabı Meil arayüzünden silene ya da sunucu verisini (<code>data/</code> klasörünü) temizleyene
+    kadar saklanır. Hesap bağlantısını kestiğinizde ilgili kimlik bilgileri veritabanından silinir. Dataroom
+    belgeleri ve mail kayıtları arayüzden tek tek veya toplu olarak silinebilir.</p>
+
+  <h2>5. Güvenlik önlemleri</h2>
+  <ul>
+    <li>Hesap ve takvim şifreleri AES (Fernet) ile şifrelenir; düz metin saklanmaz.</li>
+    <li>Uygulama erişimi PIN + PBKDF2-SHA256 (200.000 tur) ile korunur; 5 hatalı denemede 60 saniye kilitlenir.</li>
+    <li>Tüm bağlantı HTTPS/TLS üzerinden yapılır; oturum çerezleri yalnızca HTTPS'te iletilir (Secure, HttpOnly).</li>
+  </ul>
+
+  <h2>6. Haklarınız</h2>
+  <p>Bu örneğin tek kullanıcısı olarak verileriniz üzerinde tam denetime sahipsiniz: dışa aktarma, düzeltme
+    ve silme işlemlerini doğrudan uygulama arayüzünden yapabilirsiniz. Ek bir talebiniz olursa
+    <span class="placeholder">gizlilik@ornek-alan-adi.tr</span> adresinden ulaşabilirsiniz.</p>
+
+  <h2>7. Çocukların gizliliği</h2>
+  <p>Meil, 13 yaş altındaki kullanıcılara yönelik değildir ve bu yaş grubundan bilerek veri toplamaz.</p>
+
+  <h2>8. Bu politikadaki değişiklikler</h2>
+  <p>Bu sayfa güncellendiğinde üstteki tarih değiştirilir. Önemli değişikliklerde uygulama içinde bilgilendirme
+    yapılır.</p>
+</div>
+</body>
+</html>

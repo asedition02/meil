@@ -1407,7 +1407,7 @@ table.dataroom input[type="checkbox"] { width: 15px; height: 15px; accent-color:
 
 .donna-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--panel-2);
+  padding: calc(14px + env(safe-area-inset-top)) 16px 14px; border-bottom: 1px solid var(--border); background: var(--panel-2);
 }
 .donna-id { display: flex; align-items: center; gap: 11px; }
 .donna-id b { display: block; font-size: 15px; font-weight: 750; letter-spacing: -.2px; }
@@ -1498,7 +1498,7 @@ table.dataroom input[type="checkbox"] { width: 15px; height: 15px; accent-color:
   background: var(--panel); color: var(--text); font-size: 12.5px; font-family: inherit;
 }
 
-.donna-compose { border-top: 1px solid var(--border); padding: 11px 14px 14px; background: var(--panel-2); }
+.donna-compose { border-top: 1px solid var(--border); padding: 11px 14px calc(14px + env(safe-area-inset-bottom)); background: var(--panel-2); }
 .donna-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 9px; }
 .donna-chip {
   font-size: 11.5px; color: var(--muted); background: var(--panel); border: 1px solid var(--border);
@@ -1708,6 +1708,7 @@ table.dataroom input[type="checkbox"] { width: 15px; height: 15px; accent-color:
   letter-spacing: -0.3px; line-height: 1.35; word-break: break-word;
 }
 .mv-tools { display: flex; gap: 3px; flex-shrink: 0; }
+.detail-back { display: none; flex-shrink: 0; }
 .mv-from { display: flex; align-items: center; gap: 11px; margin-top: 14px; min-width: 0; }
 .mv-from .avatar { width: 34px; height: 34px; border-radius: 50%; font-size: 12.5px; }
 .mv-who { flex: 1; min-width: 0; }
@@ -2121,3 +2122,105 @@ table.dataroom input[type="checkbox"] { width: 15px; height: 15px; accent-color:
 }
 .today-cta b { font-size: 15px; }
 .today-cta:hover { filter: brightness(.97); }
+
+/* ============================================================
+   MOBİL KABUK — telefon genişliğinde tam uygulama düzeni
+   Rail → alt sekme çubuğu, Posta/Dataroom → tek panelli gezinme
+   ============================================================ */
+
+button, .rail-btn, .chip, .view-tab, .icon-btn, .pill, .dr-btn, .dr-icon-btn {
+  touch-action: manipulation;
+}
+#modal-overlay, .donna-panel, #dr-inspector, #gs-overlay {
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 680px) {
+  html { color-scheme: light dark; }
+
+  /* ---- Üst bar ---- */
+  #topbar {
+    height: auto; min-height: 52px; flex-wrap: wrap; row-gap: 8px;
+    padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
+  }
+  .brand-name { display: none; }
+  .brand { min-width: 0; }
+  .topbar-search { order: 3; flex-basis: 100%; max-width: none; margin: 0; }
+  .topbar-right { min-width: 0; }
+  #sync-btn span { display: none; }
+  #sync-btn { padding: 9px; }
+
+  /* ---- Ana yerleşim + alt sekme çubuğu ---- */
+  #layout {
+    flex-direction: column; padding: 0;
+    padding-bottom: calc(58px + env(safe-area-inset-bottom));
+  }
+  #rail {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 500;
+    width: auto; flex-direction: row; justify-content: space-around;
+    background: var(--panel); border-top: 1px solid var(--border);
+    padding: 6px 2px calc(4px + env(safe-area-inset-bottom));
+    gap: 0; box-shadow: 0 -2px 12px rgba(15, 23, 42, .06);
+  }
+  .rail-btn { flex: 1; min-width: 0; padding: 2px 0; }
+  .rail-tile { width: 100%; max-width: 46px; height: 34px; border-radius: 10px; margin: 0 auto; }
+  .rail-label { font-size: 9.5px; }
+  .rail-badge { top: -2px; right: 18%; }
+
+  /* Sadece çok panelli görünümler dikeyde yığılır (tek panelli "page" görünümleri
+     satır/sütun yönünden etkilenmez, bu yüzden genele değil, tek tek uygulanır). */
+  #view-inbox, #view-dataroom, #view-calendar { flex-direction: column; }
+
+  /* ---- Takvim: yan panel altta akar, sabit flex:1 yükseklik yerine doğal akış ---- */
+  #cal-main, #cal-side { flex: none; width: auto; }
+  #view-calendar { overflow-y: auto; }
+  #cal-main { overflow: visible; }
+
+  /* ---- Posta: tek panelli gezinme ---- */
+  #list-panel { width: auto; max-height: none; border-radius: 0; border-width: 0; box-shadow: none; }
+  #detail-panel {
+    display: none; position: fixed; inset: 0; z-index: 300; border-radius: 0; border-width: 0;
+    padding: calc(16px + env(safe-area-inset-top)) 0 calc(16px + env(safe-area-inset-bottom));
+  }
+  #view-inbox.mail-detail-open #list-panel { display: none; }
+  #view-inbox.mail-detail-open #detail-panel { display: block; }
+  .detail-back { display: inline-flex; }
+
+  /* Tam ekran bir katman açıkken alt sekme çubuğu gizlenir (okurken dikkat dağıtmasın) */
+  #layout:has(#view-inbox.mail-detail-open) #rail,
+  #layout:has(#view-dataroom.folders-open) #rail,
+  #layout:has(#view-dataroom.inspector-open) #rail {
+    display: none;
+  }
+  body:has(.donna-panel.open) #rail { display: none; }
+  body:has(#modal-overlay[style*="flex"]) #rail { display: none; }
+  .mv-head, .mv-scroll, .mvr-collapsed, .mvr-form { padding-left: 16px; padding-right: 16px; }
+
+  /* ---- Dataroom: yan panel + inceleme paneli tam ekran katman ---- */
+  #view-dataroom { flex-direction: column; }
+  .dr-folders-toggle { display: inline-flex !important; }
+  #dr-side {
+    display: none; position: fixed; inset: 0; z-index: 320; width: 100%; border-radius: 0;
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  #view-dataroom.folders-open #dr-side { display: block; }
+  #dr-inspector {
+    position: fixed; inset: 0; z-index: 330; border-radius: 0; width: auto;
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  /* ---- Modallar: kenarlara daha yakın, üstten taşmasın ---- */
+  #modal-overlay { padding: 12px; align-items: flex-end; }
+  #modal { max-width: none; max-height: 90vh; padding-bottom: calc(22px + env(safe-area-inset-bottom)); }
+
+  /* ---- Genel araç çubukları: satır satır sar ---- */
+  .cal-toolbar, .tasks-toolbar, .dr-toolbar-actions { flex-wrap: wrap; }
+  #dr-main .dr-search { flex-basis: 100%; }
+
+  /* ---- Formlar: iki sütun yerine tek sütun ---- */
+  .form-grid { grid-template-columns: 1fr; }
+}
+
+.dr-folders-toggle { display: none; }
+.dr-side-close { display: none; }
+@media (max-width: 680px) { .dr-side-close { display: inline-flex; } }
