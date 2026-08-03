@@ -60,6 +60,13 @@ USER_NAME = os.environ.get("USER_NAME", "")
 MS_CLIENT_ID = os.environ.get("MS_CLIENT_ID", "").strip() or "2fae9a13-5d84-42f9-bf8b-ff4085924a42"
 MS_TENANT = os.environ.get("MS_TENANT", "common").strip() or "common"
 
+# Web Push (VAPID) bildirimleri: anahtar çifti ilk kullanımda otomatik üretilip
+# veritabanında saklanır — elle bir adım gerekmez. VAPID_SUBJECT, push
+# servislerinin (Apple/Google/Mozilla) talep ettiği iletişim adresidir
+# ("mailto:..." ya da "https://..."); boş bırakılırsa ilk hesabın e-postası,
+# hesap da yoksa "mailto:admin@meil.local" kullanılır.
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "").strip()
+
 # Üretim modu: TLS/HTTPS, secure cookies, HSTS, vb. — Caddy gibi ters proxy
 # arkasında VPS'ye kurulum için True olmalıdır. Yerel geliştirme için False.
 # production = True → set_cookie'de secure=True, SameSite=Strict, HSTS başlığı ekler.

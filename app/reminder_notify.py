@@ -14,7 +14,7 @@ bu iş kendi dosyasında yaşıyor.
 import datetime as dt
 import logging
 
-from . import database, email_client
+from . import database, email_client, push_notify
 
 log = logging.getLogger("meil.reminders")
 
@@ -24,7 +24,7 @@ def _now_iso() -> str:
 
 
 def notify_due_reminders():
-    """Zamanı gelmiş, henüz bildirilmemiş hatırlatmalar için e-posta gönderir."""
+    """Zamanı gelmiş, henüz bildirilmemiş hatırlatmalar için e-posta + push gönderir."""
     due = database.due_reminders_unnotified(_now_iso())
     if not due:
         return
@@ -35,12 +35,17 @@ def notify_due_reminders():
     if not account:
         return
     for r in due:
+        title = f"Hatırlatma: {r['text']}"
         try:
             email_client.send_message(
-                account, account["email"], f"Hatırlatma: {r['text']}",
+                account, account["email"], title,
                 f"Hatırlatma zamanı geldi:\n\n{r['text']}\n\n— Meil",
             )
         except Exception:
             log.exception("Hatırlatma e-postası gönderilemedi (id=%s)", r["id"])
             continue
+        try:
+            push_notify.send_push(title, "Hatırlatma zamanı geldi.")
+        except Exception:
+            log.exception("Hatırlatma push bildirimi gönderilemedi (id=%s)", r["id"])
         database.mark_reminder_notified(r["id"])
