@@ -66,6 +66,8 @@ const MI = {
   sun: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
   x: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg>',
   thread: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2Z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>',
+  mail: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 8 9 6 9-6"/></svg>',
+  check: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m5 12 5 5 9-9"/></svg>',
 };
 
 function toast(msg, isError = false) {
@@ -191,14 +193,16 @@ document.querySelectorAll(".rail-btn").forEach((btn) => {
     document.querySelectorAll(".rail-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     const view = btn.dataset.view;
-    ["inbox", "calendar", "dataroom", "bulk", "accounts"].forEach((v) => {
+    ["today", "inbox", "calendar", "dataroom", "bulk", "tasks", "accounts"].forEach((v) => {
       const elem = $(`#view-${v}`);
       if (!elem) { console.error(`View element not found: #view-${v}`); return; }
       elem.style.display = v === view ? "flex" : "none";
     });
+    if (view === "today") loadToday();
     if (view === "calendar") loadCalendar();
     if (view === "dataroom") loadDataroom();
     if (view === "bulk") loadBulk();
+    if (view === "tasks") loadTasks();
     if (view === "accounts") loadAccounts();
   };
 });
@@ -506,6 +510,10 @@ function renderDetail(e, threadMsgs = []) {
           <input id="regen-instruction" placeholder="AI'ya talimat: daha resmi yaz, toplantı öner…">
           <button class="pill ghost" id="regen-btn" title="Yeniden öner">${MI.refresh}</button>
         </div>
+        <label class="mvr-await">
+          <input type="checkbox" id="reply-await">
+          Cevap bekliyorum — <input type="number" id="reply-await-days" value="3" min="1" max="60"> gün içinde hatırlat
+        </label>
         <div class="mvr-actions">
           <button class="pill ghost" id="mvr-close">Kapat</button>
           <button class="pill ghost" id="archive-btn">Arşivle</button>
@@ -558,8 +566,10 @@ function renderDetail(e, threadMsgs = []) {
     const from = e.account_email ? ` (${e.account_email} hesabından)` : "";
     if (!confirm(`${e.sender_email} adresine${from} bu yanıt gönderilsin mi?`)) return;
     $("#send-btn").disabled = true;
+    const awaitDays = $("#reply-await").checked ? (parseInt($("#reply-await-days").value, 10) || 3) : null;
     try {
-      await api(`/api/emails/${e.id}/send`, { method: "POST", body: JSON.stringify({ reply_text: text }) });
+      await api(`/api/emails/${e.id}/send`, { method: "POST",
+        body: JSON.stringify({ reply_text: text, await_reply_days: awaitDays }) });
       toast("Yanıt gönderildi ✓");
       await loadEmails();
       selectEmail(e.id);
@@ -714,6 +724,10 @@ function openComposeModal(prefill = {}) {
         <input id="c-ai" placeholder="AI'ya anlatın: 'yarınki toplantıyı iptal et, kibarca'">
         <button class="pill ghost" id="c-ai-btn" style="flex:0 0 auto">${MI.sparkle} AI ile Yaz</button>
       </div>
+      <label class="mvr-await">
+        <input type="checkbox" id="c-await">
+        Cevap bekliyorum — <input type="number" id="c-await-days" value="3" min="1" max="60"> gün içinde hatırlat
+      </label>
     </div>
     <div class="modal-actions">
       <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
@@ -736,6 +750,7 @@ function openComposeModal(prefill = {}) {
   $("#c-send").onclick = async () => {
     const btn = $("#c-send");
     btn.disabled = true; btn.textContent = "Gönderiliyor...";
+    const awaitDays = $("#c-await").checked ? (parseInt($("#c-await-days").value, 10) || 3) : null;
     try {
       await api("/api/compose", { method: "POST",
         body: JSON.stringify({
@@ -744,6 +759,7 @@ function openComposeModal(prefill = {}) {
           cc: $("#c-cc").value.trim(),
           subject: $("#c-subject").value.trim(),
           body: $("#c-body").value,
+          await_reply_days: awaitDays,
         }) });
       toast("Mail gönderildi ✓");
       closeModal();
@@ -1959,6 +1975,141 @@ $("#bulk-send-btn").onclick = async () => {
   }
 };
 
+// ---- Toplu mail: gönderim geçmişi ----
+
+document.querySelectorAll(".bulk-tab").forEach((tab) => {
+  tab.onclick = () => {
+    document.querySelectorAll(".bulk-tab").forEach((t) => t.classList.remove("active"));
+    tab.classList.add("active");
+    const isHistory = tab.dataset.btab === "history";
+    $("#bulk-pane-send").hidden = isHistory;
+    $("#bulk-pane-history").hidden = !isHistory;
+    if (isHistory) loadBulkHistory();
+  };
+});
+
+const BH_STATUS = { sent: ["✓", "ok", "gönderildi"], failed: ["✕", "bad", "başarısız"],
+                    skipped: ["−", "muted", "atlandı"] };
+
+function bhDate(ts) {
+  if (!ts) return "";
+  try {
+    return new Date(ts.replace(" ", "T") + "Z").toLocaleString("tr-TR",
+      { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch { return ts; }
+}
+
+let bhTimer = null;
+$("#bh-q").addEventListener("input", () => {
+  clearTimeout(bhTimer);
+  $("#bh-clear").hidden = !$("#bh-q").value.trim();
+  bhTimer = setTimeout(loadBulkHistory, 280);
+});
+$("#bh-clear").onclick = () => {
+  $("#bh-q").value = ""; $("#bh-clear").hidden = true; loadBulkHistory();
+};
+
+async function loadBulkHistory() {
+  const body = $("#bh-body");
+  const q = $("#bh-q").value.trim();
+  body.innerHTML = '<p class="hint">Yükleniyor…</p>';
+  try {
+    const r = await api(`/api/bulk/history?q=${encodeURIComponent(q)}`);
+    if (r.mode === "search") { renderBhSearch(r); $("#bh-stats").innerHTML = ""; return; }
+    const st = r.stats || {};
+    $("#bh-stats").innerHTML = `
+      <span><b>${st.campaigns ?? 0}</b> gönderim</span>
+      <span><b>${st.sent ?? 0}</b> mail gönderildi</span>
+      <span><b>${st.unique_recipients ?? 0}</b> farklı alıcı</span>
+      ${st.failed ? `<span class="bad"><b>${st.failed}</b> başarısız</span>` : ""}`;
+    renderBhCampaigns(r.campaigns || []);
+  } catch (e) {
+    body.innerHTML = `<p class="auth-error">${esc(e.message)}</p>`;
+  }
+}
+
+function renderBhCampaigns(list) {
+  const body = $("#bh-body");
+  if (!list.length) {
+    body.innerHTML = '<p class="hint">Henüz toplu mail göndermediniz.</p>';
+    return;
+  }
+  body.innerHTML = list.map((c) => `
+    <div class="bh-camp" data-cid="${c.id}">
+      <div class="bh-camp-head" role="button" tabindex="0">
+        <div class="bh-camp-main">
+          <div class="bh-camp-subj">${esc(c.subject || "(konusuz)")}
+            ${c.is_test ? '<span class="badge">deneme</span>' : ""}</div>
+          <div class="bh-camp-meta">
+            ${esc(bhDate(c.started_at))} · ${esc(c.account_email || "")}
+            ${c.filename ? " · " + esc(c.filename) : ""}
+          </div>
+        </div>
+        <div class="bh-camp-nums">
+          <span class="ok">${c.sent} ✓</span>
+          ${c.failed ? `<span class="bad">${c.failed} ✕</span>` : ""}
+          ${c.skipped ? `<span class="muted">${c.skipped} −</span>` : ""}
+        </div>
+        <span class="bh-caret">⌄</span>
+      </div>
+      <div class="bh-camp-body"></div>
+    </div>`).join("");
+
+  body.querySelectorAll(".bh-camp-head").forEach((head) => {
+    const toggle = async () => {
+      const card = head.parentElement;
+      const open = card.classList.toggle("open");
+      const target = card.querySelector(".bh-camp-body");
+      if (open && !target.dataset.loaded) {
+        target.innerHTML = '<p class="hint">Alıcılar yükleniyor…</p>';
+        try {
+          const d = await api(`/api/bulk/history/${card.dataset.cid}`);
+          target.innerHTML = bhRecipientRows(d.recipients || []);
+          target.dataset.loaded = "1";
+        } catch (e) {
+          target.innerHTML = `<p class="auth-error">${esc(e.message)}</p>`;
+        }
+      }
+    };
+    head.onclick = toggle;
+    head.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
+  });
+}
+
+function bhRecipientRows(list) {
+  if (!list.length) return '<p class="hint">Alıcı kaydı yok.</p>';
+  return `<div class="bh-rcpts">${list.map((r) => {
+    const [ico, cls] = BH_STATUS[r.status] || ["•", "muted"];
+    return `<div class="bh-rcpt ${cls}">
+      <span class="bh-ico">${ico}</span>
+      <span class="bh-mail">${esc(r.email)}</span>
+      <span class="bh-subj">${esc(r.subject || "")}</span>
+      <span class="bh-time">${esc(bhDate(r.sent_at))}</span>
+      ${r.error ? `<span class="bh-err" title="${esc(r.error)}">${esc(r.error.slice(0, 42))}</span>` : ""}
+    </div>`;
+  }).join("")}</div>`;
+}
+
+function renderBhSearch(r) {
+  const body = $("#bh-body");
+  const list = r.results || [];
+  if (!list.length) {
+    body.innerHTML = `<p class="hint">"${esc(r.query)}" için kayıt bulunamadı.</p>`;
+    return;
+  }
+  body.innerHTML = `<p class="hint">"${esc(r.query)}" için <b>${list.length}</b> kayıt:</p>
+    <div class="bh-rcpts search">${list.map((x) => {
+      const [ico, cls, label] = BH_STATUS[x.status] || ["•", "muted", x.status];
+      return `<div class="bh-rcpt ${cls}">
+        <span class="bh-ico" title="${esc(label)}">${ico}</span>
+        <span class="bh-mail">${esc(x.email)}</span>
+        <span class="bh-subj">${esc(x.subject || "")}</span>
+        <span class="bh-time">${esc(bhDate(x.sent_at))}</span>
+        <span class="bh-from">${esc(x.account_email || "")}${x.is_test ? " · deneme" : ""}</span>
+      </div>`;
+    }).join("")}</div>`;
+}
+
 // ---- Hesaplar ----
 
 const PROVIDER_HINTS = {
@@ -2614,7 +2765,7 @@ $("#twofa-btn").onclick = openTwofa;
 
 // ---- Donna (asistan paneli) ----
 
-const donna = { open: false, loading: false, history: [], briefed: false, notifications: [] };
+const donna = { open: false, loading: false, history: [], briefed: false, notifications: [], conversationId: null, conversations: [], memories: [] };
 
 function donnaOpen() {
   donna.open = true;
@@ -2638,6 +2789,8 @@ $("#donna-close").onclick = donnaClose;
 $("#donna-scrim").onclick = donnaClose;
 $("#donna-refresh").onclick = () => { donna.briefed = false; loadDonnaBrief(); };
 $("#donna-automations-btn").onclick = () => { if (!donna.open) donnaOpen(); loadAutomationsList(); };
+$("#donna-history-btn").onclick = loadDonnaConversations;
+$("#donna-memory-btn").onclick = loadDonnaMemories;
 
 // ---- Bildirimler (otomasyon uyarıları) ----
 
@@ -2801,10 +2954,9 @@ async function askDonna() {
   try {
     const r = await api("/api/donna/ask", {
       method: "POST",
-      body: JSON.stringify({ question: q, history: donna.history.slice(-6) }),
+      body: JSON.stringify({ question: q, conversation_id: donna.conversationId }),
     });
-    donna.history.push({ role: "user", content: q });
-    donna.history.push({ role: "assistant", content: r.answer || "" });
+    donna.conversationId = r.conversation_id;
     const srcs = (r.sources || []).map((s) =>
       `<button class="donna-src" data-mail="${s.id}">✉️ ${esc(s.sender)} · ${esc(s.subject)}</button>`).join("");
     const el = document.getElementById(thinkingId);
@@ -2829,6 +2981,176 @@ async function askDonna() {
   }
 }
 
+// --- Donna: kalıcı sohbet listesi ---
+
+async function loadDonnaConversations() {
+  const body = $("#donna-body");
+  setDonnaChips([]);
+  body.innerHTML = `<div class="donna-loading"><span></span><span></span><span></span> Sohbetler yükleniyor…</div>`;
+  try {
+    const r = await api("/api/donna/conversations");
+    donna.conversations = r.conversations;
+    renderDonnaConversationList();
+  } catch (e) {
+    body.innerHTML = `<p class="auth-error donna-err">${esc(e.message)}</p>`;
+  }
+}
+
+function renderDonnaConversationList() {
+  const body = $("#donna-body");
+  const rows = donna.conversations.map((c) => `
+    <div class="donna-conv-row${c.id === donna.conversationId ? " active" : ""}" data-conv-row="${c.id}">
+      <button class="donna-conv-open" data-open="${c.id}">
+        <b>${esc(c.title)}</b>
+        ${c.last_message ? `<span>${esc(c.last_message.slice(0, 64))}</span>` : "<span>Henüz mesaj yok</span>"}
+      </button>
+      <button class="icon-btn donna-conv-rename" data-rename="${c.id}" title="Yeniden adlandır">✎</button>
+      <button class="icon-btn donna-conv-delete" data-delete="${c.id}" title="Sil">${MI.x}</button>
+    </div>`).join("");
+  body.innerHTML = `
+    <div class="donna-conv-list">
+      <button class="donna-conv-new" id="donna-conv-new">+ Yeni sohbet</button>
+      ${rows || '<p class="donna-calm">Henüz sohbet yok — bir soru sorarak başlayın.</p>'}
+    </div>`;
+  $("#donna-conv-new").onclick = startNewDonnaConversation;
+  body.querySelectorAll("[data-open]").forEach((btn) => {
+    btn.onclick = () => openDonnaConversation(parseInt(btn.dataset.open, 10));
+  });
+  body.querySelectorAll("[data-rename]").forEach((btn) => {
+    btn.onclick = (e) => { e.stopPropagation(); startRenameDonnaConversation(parseInt(btn.dataset.rename, 10)); };
+  });
+  body.querySelectorAll("[data-delete]").forEach((btn) => {
+    btn.onclick = (e) => { e.stopPropagation(); deleteDonnaConversation(parseInt(btn.dataset.delete, 10)); };
+  });
+}
+
+function startRenameDonnaConversation(id) {
+  const row = $(`[data-conv-row="${id}"]`);
+  const conv = donna.conversations.find((c) => c.id === id);
+  if (!row || !conv) return;
+  const openBtn = row.querySelector(".donna-conv-open");
+  openBtn.innerHTML = `<input class="donna-conv-rename-input" value="${esc(conv.title)}" maxlength="120">`;
+  const input = openBtn.querySelector("input");
+  input.focus();
+  input.select();
+  const save = async () => {
+    const title = input.value.trim();
+    if (title && title !== conv.title) {
+      try {
+        await api(`/api/donna/conversations/${id}`, { method: "PUT", body: JSON.stringify({ title }) });
+      } catch (err) { toast(err.message, true); }
+    }
+    loadDonnaConversations();
+  };
+  input.onblur = save;
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") input.blur();
+    if (e.key === "Escape") { input.onblur = null; loadDonnaConversations(); }
+  };
+}
+
+async function deleteDonnaConversation(id) {
+  if (!confirm("Bu sohbet kalıcı olarak silinsin mi?")) return;
+  try {
+    await api(`/api/donna/conversations/${id}`, { method: "DELETE" });
+    if (donna.conversationId === id) donna.conversationId = null;
+    toast("Sohbet silindi");
+    loadDonnaConversations();
+  } catch (err) { toast(err.message, true); }
+}
+
+function startNewDonnaConversation() {
+  donna.conversationId = null;
+  setDonnaChips([]);
+  $("#donna-body").innerHTML = `
+    <div class="donna-brief">
+      <div class="donna-greet">Yeni sohbet</div>
+      <p class="donna-calm">Bir şey sorun — mailler, takvim veya belgeler hakkında.</p>
+    </div>`;
+  $("#donna-input").focus();
+}
+
+async function openDonnaConversation(id) {
+  donna.conversationId = id;
+  const body = $("#donna-body");
+  body.innerHTML = `<div class="donna-loading"><span></span><span></span><span></span> Sohbet yükleniyor…</div>`;
+  try {
+    const r = await api(`/api/donna/conversations/${id}/messages`);
+    if (!r.messages.length) {
+      body.innerHTML = `<p class="donna-calm">Bu sohbette henüz mesaj yok.</p>`;
+    } else {
+      body.innerHTML = r.messages.map((m) => {
+        if (m.role === "user") return `<div class="donna-msg me">${esc(m.content)}</div>`;
+        const srcs = (m.sources || []).map((s) =>
+          `<button class="donna-src" data-mail="${s.id}">✉️ ${esc(s.sender)} · ${esc(s.subject)}</button>`).join("");
+        return `<div class="donna-msg her">${esc(m.content).replace(/\n/g, "<br>")}${srcs ? `<div class="donna-srcs">${srcs}</div>` : ""}</div>`;
+      }).join("");
+      body.querySelectorAll(".donna-src").forEach((b) => {
+        b.onclick = () => openMailFromDonna(parseInt(b.dataset.mail, 10));
+      });
+    }
+    body.scrollTop = body.scrollHeight;
+    setDonnaChips([]);
+  } catch (e) {
+    body.innerHTML = `<p class="auth-error donna-err">${esc(e.message)}</p>`;
+  }
+}
+
+// --- Donna: hafıza yönetimi ---
+
+async function loadDonnaMemories() {
+  const body = $("#donna-body");
+  setDonnaChips([]);
+  body.innerHTML = `<div class="donna-loading"><span></span><span></span><span></span> Hafıza yükleniyor…</div>`;
+  try {
+    const r = await api("/api/memories");
+    donna.memories = r.memories;
+    renderDonnaMemoryList();
+  } catch (e) {
+    body.innerHTML = `<p class="auth-error donna-err">${esc(e.message)}</p>`;
+  }
+}
+
+function renderDonnaMemoryList() {
+  const body = $("#donna-body");
+  const rows = donna.memories.map((m) => `
+    <div class="donna-conv-row donna-mem-row" data-mem-row="${m.id}">
+      <div class="donna-conv-open"><span>${esc(m.content)}</span></div>
+      <button class="icon-btn donna-conv-delete" data-mem-delete="${m.id}" title="Sil">${MI.x}</button>
+    </div>`).join("");
+  body.innerHTML = `
+    <div class="donna-conv-list">
+      <form id="donna-mem-add" class="donna-inputrow">
+        <input id="donna-mem-input" placeholder="Hatırlanacak bir şey ekle…" maxlength="500">
+        <button type="submit" class="pill accent">Ekle</button>
+      </form>
+      ${rows || '<p class="donna-calm">Henüz bir şey hatırlamıyorum.</p>'}
+    </div>`;
+  $("#donna-mem-add").onsubmit = async (e) => {
+    e.preventDefault();
+    const input = $("#donna-mem-input");
+    const content = input.value.trim();
+    if (!content) return;
+    try {
+      await api("/api/memories", { method: "POST", body: JSON.stringify({ content }) });
+      input.value = "";
+      loadDonnaMemories();
+    } catch (err) { toast(err.message, true); }
+  };
+  body.querySelectorAll("[data-mem-delete]").forEach((btn) => {
+    btn.onclick = () => deleteDonnaMemory(parseInt(btn.dataset.memDelete, 10));
+  });
+}
+
+async function deleteDonnaMemory(id) {
+  if (!confirm("Bu hatırlanan bilgi silinsin mi?")) return;
+  try {
+    await api(`/api/memories/${id}`, { method: "DELETE" });
+    toast("Silindi");
+    loadDonnaMemories();
+  } catch (err) { toast(err.message, true); }
+}
+
 // --- Donna'nın hazırladığı işlem: onay kartı ---
 
 const ACTION_META = {
@@ -2839,6 +3161,7 @@ const ACTION_META = {
   belge_sil:         ["🗑️", "Belgeyi sil", "Sil"],
   belge_yukle:       ["📎", "Belge yükle", "Yükleme ekranını aç"],
   otomasyon_olustur: ["🔔", "Otomasyon oluştur", "Oluştur"],
+  hafiza_ekle:       ["🧠", "Hatırla", "Hatırla"],
 };
 
 function renderDonnaAction(a) {
@@ -2878,6 +3201,8 @@ function renderDonnaAction(a) {
       </div>
       <div class="da-line">🔔 Eylem: Bildirim gönder</div>
       ${a.automation_note ? `<div class="da-line da-muted">${esc(a.automation_note)}</div>` : ""}`;
+  } else if (a.type === "hafiza_ekle") {
+    fields = `<textarea class="da-input da-text" rows="2" data-f="memory_text">${esc(a.memory_text || "")}</textarea>`;
   }
 
   donnaAppend(`
@@ -3108,11 +3433,470 @@ $("#log-btn").onclick = openSecurityLog;
   };
 })();
 
+// ---- Görevler ----
+
+const TASK_PRIORITY_LABEL = { dusuk: "Düşük", orta: "Orta", yuksek: "Yüksek", acil: "Acil" };
+const TASK_STATUS_LABEL = {
+  yapilacak: "Yapılacak", devam_ediyor: "Devam Ediyor",
+  tamamlandi: "Tamamlandı", iptal: "İptal",
+};
+const TASK_STATUS_ORDER = ["yapilacak", "devam_ediyor", "tamamlandi", "iptal"];
+
+let tasksState = { items: [], counts: {}, tags: [], status: "", priority: "", q: "" };
+
+async function loadTasks() {
+  const params = new URLSearchParams();
+  if (tasksState.status) params.set("status", tasksState.status);
+  if (tasksState.priority) params.set("priority", tasksState.priority);
+  if (tasksState.q) params.set("q", tasksState.q);
+  try {
+    const data = await api(`/api/tasks?${params}`);
+    tasksState.items = data.tasks;
+    tasksState.counts = data.counts;
+    tasksState.tags = data.tags;
+    renderTaskChips();
+    renderTaskList();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function renderTaskChips() {
+  const holder = $("#task-status-chips");
+  const total = Object.values(tasksState.counts).reduce((a, b) => a + b, 0);
+  const chips = [["", "Tümü", total]].concat(
+    TASK_STATUS_ORDER.map((s) => [s, TASK_STATUS_LABEL[s], tasksState.counts[s] || 0])
+  );
+  holder.innerHTML = chips
+    .map(([val, label, n]) => `<button class="chip${tasksState.status === val ? " active" : ""}" data-tstatus="${val}">${label}${n ? ` <span class="vn">${n}</span>` : ""}</button>`)
+    .join("");
+  holder.querySelectorAll("[data-tstatus]").forEach((btn) => {
+    btn.onclick = () => { tasksState.status = btn.dataset.tstatus; loadTasks(); };
+  });
+}
+
+function taskDueBadge(due) {
+  if (!due) return "";
+  let cls = "", label = due;
+  try {
+    const d = new Date(`${due}T00:00:00`);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((d - today) / 86400000);
+    label = d.toLocaleDateString("tr-TR", { day: "2-digit", month: "short" });
+    if (diffDays < 0) cls = " tk-overdue";
+    else if (diffDays === 0) cls = " tk-today";
+  } catch { /* ham metni göster */ }
+  return `<span class="tk-due${cls}">${MI.calendar} ${label}</span>`;
+}
+
+function taskCardHtml(t) {
+  const done = t.status === "tamamlandi";
+  const cancelled = t.status === "iptal";
+  const tags = (t.tags || "").split(",").map((x) => x.trim()).filter(Boolean);
+  const links = [];
+  if (t.related_email_id) links.push(`<span class="tk-link">${MI.mail} ${esc(t.related_email_subject || "Mail")}</span>`);
+  if (t.related_file_path) links.push(`<span class="tk-link">${MI.paperclip} ${esc(t.related_file_path.split("/").pop())}</span>`);
+  if (t.related_event_id) links.push(`<span class="tk-link">${MI.calendar} ${esc(t.related_event_title || "Etkinlik")}</span>`);
+  return `
+    <div class="task-card${done ? " tk-done" : ""}${cancelled ? " tk-cancelled" : ""}" data-topen="${t.id}">
+      <button type="button" class="tk-checkbox${done ? " checked" : ""}" data-tcheck="${t.id}" data-tdone="${done ? 0 : 1}" title="${done ? "Tamamlanmadı olarak işaretle" : "Tamamlandı olarak işaretle"}">${done ? MI.check : ""}</button>
+      <div class="tk-body">
+        <div class="tk-title-row">
+          <span class="tk-title">${esc(t.title)}</span>
+          <span class="tk-priority tk-pri-${t.priority}">${TASK_PRIORITY_LABEL[t.priority] || t.priority}</span>
+        </div>
+        ${t.description ? `<div class="tk-desc">${esc(t.description)}</div>` : ""}
+        <div class="tk-meta-row">
+          ${taskDueBadge(t.due_date)}
+          ${t.assignee ? `<span class="tk-assignee">${esc(t.assignee)}</span>` : ""}
+          ${tags.map((tag) => `<span class="tk-tag">${esc(tag)}</span>`).join("")}
+          ${links.join("")}
+        </div>
+      </div>
+      <button type="button" class="icon-btn tk-delete" data-tdelete="${t.id}" title="Sil">${MI.x}</button>
+    </div>`;
+}
+
+function renderTaskList() {
+  const holder = $("#task-list");
+  if (!tasksState.items.length) {
+    holder.innerHTML = `<div class="placeholder"><p>Görev bulunamadı. "Yeni Görev" ile ekleyin.</p></div>`;
+    return;
+  }
+  holder.innerHTML = tasksState.items.map(taskCardHtml).join("");
+  holder.querySelectorAll("[data-tcheck]").forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      toggleTaskDone(Number(btn.dataset.tcheck), btn.dataset.tdone === "1");
+    };
+  });
+  holder.querySelectorAll("[data-topen]").forEach((card) => {
+    card.onclick = () => {
+      const t = tasksState.items.find((x) => x.id === Number(card.dataset.topen));
+      if (t) openTaskModal(t);
+    };
+  });
+  holder.querySelectorAll("[data-tdelete]").forEach((btn) => {
+    btn.onclick = (e) => { e.stopPropagation(); deleteTask(Number(btn.dataset.tdelete)); };
+  });
+}
+
+async function toggleTaskDone(id, done) {
+  try {
+    await api(`/api/tasks/${id}/complete`, { method: "POST", body: JSON.stringify({ done }) });
+    loadTasks();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function deleteTask(id) {
+  if (!confirm("Bu görevi silmek istediğinize emin misiniz?")) return;
+  try {
+    await api(`/api/tasks/${id}`, { method: "DELETE" });
+    toast("Görev silindi");
+    loadTasks();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function openTaskModal(task) {
+  const editing = !!task;
+  const link = {
+    email_id: task?.related_email_id || null,
+    email_label: task?.related_email_id ? (task.related_email_subject || "Mail") : "",
+    file_path: task?.related_file_path || "",
+    file_label: task?.related_file_path ? task.related_file_path.split("/").pop() : "",
+    event_id: task?.related_event_id || null,
+    event_label: task?.related_event_id ? (task.related_event_title || "Etkinlik") : "",
+  };
+  openModal(`
+    <h3>${editing ? "Görevi Düzenle" : "Yeni Görev"}</h3>
+    <div class="form-col">
+      <input id="tk-title" placeholder="Görev başlığı" value="${esc(task?.title || "")}">
+      <textarea id="tk-desc" placeholder="Açıklama (isteğe bağlı)" rows="3">${esc(task?.description || "")}</textarea>
+      <div class="form-row">
+        <input id="tk-due" type="date" value="${task?.due_date || ""}" title="Son tarih">
+        <select id="tk-priority" title="Öncelik">
+          <option value="dusuk" ${task?.priority === "dusuk" ? "selected" : ""}>Düşük öncelik</option>
+          <option value="orta" ${!task || task?.priority === "orta" ? "selected" : ""}>Orta öncelik</option>
+          <option value="yuksek" ${task?.priority === "yuksek" ? "selected" : ""}>Yüksek öncelik</option>
+          <option value="acil" ${task?.priority === "acil" ? "selected" : ""}>Acil</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <select id="tk-status" title="Durum">
+          <option value="yapilacak" ${!task || task?.status === "yapilacak" ? "selected" : ""}>Yapılacak</option>
+          <option value="devam_ediyor" ${task?.status === "devam_ediyor" ? "selected" : ""}>Devam Ediyor</option>
+          <option value="tamamlandi" ${task?.status === "tamamlandi" ? "selected" : ""}>Tamamlandı</option>
+          <option value="iptal" ${task?.status === "iptal" ? "selected" : ""}>İptal</option>
+        </select>
+        <input id="tk-assignee" placeholder="İlgili kişi (ad veya e-posta)" value="${esc(task?.assignee || "")}">
+      </div>
+      <input id="tk-tags" placeholder="Etiketler (virgülle ayırın)" value="${esc(task?.tags || "")}">
+      <div class="tk-link-section">
+        <div class="tk-link-label">İlişkilendir (isteğe bağlı)</div>
+        <div class="tk-link-chips" id="tk-link-chips"></div>
+        <input id="tk-link-q" placeholder="Mail, belge veya etkinlik ara…" autocomplete="off">
+        <div id="tk-link-results" class="tk-link-results"></div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
+      <button class="pill accent" id="tk-save-btn">${editing ? "Kaydet" : "Görevi Oluştur"}</button>
+    </div>`);
+
+  function renderLinkChips() {
+    const holder = $("#tk-link-chips");
+    if (!holder) return;
+    const chips = [];
+    if (link.email_id) chips.push(`<span class="tk-chip">${MI.mail} ${esc(link.email_label)}<button type="button" data-unlink="email">${MI.x}</button></span>`);
+    if (link.file_path) chips.push(`<span class="tk-chip">${MI.paperclip} ${esc(link.file_label)}<button type="button" data-unlink="file">${MI.x}</button></span>`);
+    if (link.event_id) chips.push(`<span class="tk-chip">${MI.calendar} ${esc(link.event_label)}<button type="button" data-unlink="event">${MI.x}</button></span>`);
+    holder.innerHTML = chips.join("");
+    holder.querySelectorAll("[data-unlink]").forEach((btn) => {
+      btn.onclick = () => {
+        const type = btn.dataset.unlink;
+        if (type === "email") { link.email_id = null; link.email_label = ""; }
+        if (type === "file") { link.file_path = ""; link.file_label = ""; }
+        if (type === "event") { link.event_id = null; link.event_label = ""; }
+        renderLinkChips();
+      };
+    });
+  }
+  renderLinkChips();
+
+  function renderLinkResults(res) {
+    const holder = $("#tk-link-results");
+    if (!holder) return;
+    const parts = [];
+    if (res.emails?.length) {
+      parts.push(`<div class="tk-link-group"><div class="tk-link-group-title">Mailler</div>${res.emails.map((e) => `<button type="button" class="tk-link-item" data-pick="email" data-id="${e.id}" data-label="${esc(e.subject || "(konu yok)")}">${esc(e.subject || "(konu yok)")} <span class="tk-link-sub">${esc(e.sender || "")}</span></button>`).join("")}</div>`);
+    }
+    if (res.files?.length) {
+      parts.push(`<div class="tk-link-group"><div class="tk-link-group-title">Belgeler</div>${res.files.map((f) => `<button type="button" class="tk-link-item" data-pick="file" data-id="${esc(f.path)}" data-label="${esc(f.path.split("/").pop())}">${esc(f.path.split("/").pop())}</button>`).join("")}</div>`);
+    }
+    if (res.events?.length) {
+      parts.push(`<div class="tk-link-group"><div class="tk-link-group-title">Etkinlikler</div>${res.events.map((ev) => `<button type="button" class="tk-link-item" data-pick="event" data-id="${ev.id}" data-label="${esc(ev.title || "(başlıksız)")}">${esc(ev.title || "(başlıksız)")}</button>`).join("")}</div>`);
+    }
+    holder.innerHTML = parts.join("") || `<div class="tk-link-empty">Sonuç yok</div>`;
+    holder.querySelectorAll("[data-pick]").forEach((btn) => {
+      btn.onclick = () => {
+        const type = btn.dataset.pick;
+        if (type === "email") { link.email_id = Number(btn.dataset.id); link.email_label = btn.dataset.label; }
+        if (type === "file") { link.file_path = btn.dataset.id; link.file_label = btn.dataset.label; }
+        if (type === "event") { link.event_id = Number(btn.dataset.id); link.event_label = btn.dataset.label; }
+        $("#tk-link-q").value = "";
+        holder.innerHTML = "";
+        renderLinkChips();
+      };
+    });
+  }
+
+  let linkSearchTimer;
+  $("#tk-link-q").oninput = (e) => {
+    clearTimeout(linkSearchTimer);
+    const q = e.target.value.trim();
+    if (q.length < 2) { $("#tk-link-results").innerHTML = ""; return; }
+    linkSearchTimer = setTimeout(async () => {
+      try {
+        const res = await api(`/api/search?q=${encodeURIComponent(q)}`);
+        renderLinkResults(res);
+      } catch { /* yoksay */ }
+    }, 300);
+  };
+
+  $("#tk-save-btn").onclick = async () => {
+    const title = $("#tk-title").value.trim();
+    if (!title) return toast("Görev başlığı gerekli", true);
+    const body = {
+      title,
+      description: $("#tk-desc").value.trim(),
+      due_date: $("#tk-due").value,
+      priority: $("#tk-priority").value,
+      status: $("#tk-status").value,
+      tags: $("#tk-tags").value.trim(),
+      assignee: $("#tk-assignee").value.trim(),
+      related_email_id: link.email_id,
+      related_file_path: link.file_path,
+      related_event_id: link.event_id,
+    };
+    const btn = $("#tk-save-btn");
+    btn.disabled = true;
+    try {
+      if (editing) {
+        await api(`/api/tasks/${task.id}`, { method: "PUT", body: JSON.stringify(body) });
+        toast("Görev güncellendi");
+      } else {
+        await api("/api/tasks", { method: "POST", body: JSON.stringify(body) });
+        toast("Görev oluşturuldu");
+      }
+      closeModal();
+      loadTasks();
+    } catch (err) {
+      toast(err.message, true);
+      btn.disabled = false;
+    }
+  };
+}
+
+$("#task-new-btn").onclick = () => openTaskModal(null);
+$("#task-priority-filter").onchange = (e) => { tasksState.priority = e.target.value; loadTasks(); };
+let taskSearchTimer;
+$("#task-q").oninput = (e) => {
+  clearTimeout(taskSearchTimer);
+  const val = e.target.value;
+  taskSearchTimer = setTimeout(() => { tasksState.q = val.trim(); loadTasks(); }, 300);
+};
+
+// ---- Bugün ----
+
+async function loadToday() {
+  const holder = $("#today-summary");
+  holder.innerHTML = `<div class="donna-loading"><span></span><span></span><span></span> Yükleniyor…</div>`;
+  try {
+    const r = await api("/api/today");
+    renderTodaySummary(r);
+    renderTodayEvents(r.events);
+    renderTodayTasks(r.tasks);
+    renderTodayReminders(r.reminders);
+    renderTodayAwaiting(r.awaiting_replies);
+    renderTodayNeedsReply(r.needs_reply_count);
+  } catch (e) {
+    holder.innerHTML = `<p class="auth-error donna-err">${esc(e.message)}</p>`;
+  }
+}
+
+function renderTodaySummary(r) {
+  const d = new Date(`${r.date}T00:00:00`);
+  const dateLabel = d.toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" });
+  const s = r.summary;
+  $("#today-summary").innerHTML = `
+    <h2 class="page-title">Bugün</h2>
+    <p class="today-date">${dateLabel}</p>
+    ${s
+      ? `<div class="today-brief"><b>${esc(s.greeting || "")}</b><p>${esc(s.headline || "")}</p></div>`
+      : `<p class="today-headline muted">Günlük özet için yapay zekâ sağlayıcısı ayarlayın.</p>`}`;
+}
+
+function timeLabel(iso) {
+  try { return new Date(iso).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }); }
+  catch { return ""; }
+}
+
+function formatReminderTime(text) {
+  try {
+    const d = new Date(text.replace(" ", "T"));
+    return d.toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  } catch { return text; }
+}
+
+function renderTodayEvents(events) {
+  const holder = $("#today-events");
+  if (!events.length) { holder.innerHTML = `<p class="today-empty">Bugün için etkinlik yok.</p>`; return; }
+  holder.innerHTML = events.map((e) => `
+    <div class="today-row">
+      <span class="today-row-time">${e.all_day ? "Tüm gün" : timeLabel(e.start)}</span>
+      <span class="today-row-main"><b>${esc(e.title || "(başlıksız)")}</b>${e.location ? `<span>${esc(e.location)}</span>` : ""}</span>
+    </div>`).join("");
+}
+
+function renderTodayTasks(tasks) {
+  const holder = $("#today-tasks");
+  if (!tasks.length) { holder.innerHTML = `<p class="today-empty">Açık görev yok.</p>`; return; }
+  holder.innerHTML = tasks.map((t) => `
+    <div class="today-row" data-open-task="${t.id}">
+      <span class="today-row-time">${taskDueBadge(t.due_date)}</span>
+      <span class="today-row-main"><b>${esc(t.title)}</b></span>
+      <span class="tk-priority tk-pri-${t.priority}">${TASK_PRIORITY_LABEL[t.priority] || t.priority}</span>
+    </div>`).join("");
+  holder.querySelectorAll("[data-open-task]").forEach((row) => {
+    row.onclick = () => {
+      const t = tasks.find((x) => x.id === Number(row.dataset.openTask));
+      if (t) openTaskModal(t);
+    };
+  });
+}
+
+function renderTodayReminders(reminders) {
+  const holder = $("#today-reminders");
+  if (!reminders.length) { holder.innerHTML = `<p class="today-empty">Hatırlatma yok.</p>`; return; }
+  holder.innerHTML = reminders.map((r) => `
+    <div class="today-row">
+      <button type="button" class="tk-checkbox" data-rcheck="${r.id}" title="Tamamlandı olarak işaretle"></button>
+      <span class="today-row-main" data-open-reminder="${r.id}"><b>${esc(r.text)}</b></span>
+      <span class="today-row-time">${formatReminderTime(r.remind_at)}</span>
+    </div>`).join("");
+  holder.querySelectorAll("[data-rcheck]").forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        await api(`/api/reminders/${btn.dataset.rcheck}/complete`, { method: "POST", body: JSON.stringify({ done: true }) });
+        loadToday();
+      } catch (e) { toast(e.message, true); }
+    };
+  });
+  holder.querySelectorAll("[data-open-reminder]").forEach((el) => {
+    el.onclick = () => {
+      const r = reminders.find((x) => x.id === Number(el.dataset.openReminder));
+      if (r) openReminderModal(r);
+    };
+  });
+}
+
+function renderTodayAwaiting(rows) {
+  const holder = $("#today-awaiting");
+  if (!rows.length) { holder.innerHTML = `<p class="today-empty">Cevap bekleyen yok.</p>`; return; }
+  const now = new Date();
+  holder.innerHTML = rows.map((r) => {
+    const overdue = new Date(r.due_at.replace(" ", "T")) < now;
+    return `
+    <div class="today-row">
+      <span class="today-row-main">
+        <b>${esc(r.to_name || r.to_email)}</b>
+        <span>${esc(r.subject || "(konusuz)")}</span>
+      </span>
+      <span class="today-row-time${overdue ? " tk-overdue" : ""}">${formatReminderTime(r.due_at)}</span>
+      <div class="today-row-actions">
+        <button class="pill mini" data-resolve="${r.id}">Cevaplandı</button>
+        <button class="icon-btn" data-cancel="${r.id}" title="Vazgeç">${MI.x}</button>
+      </div>
+    </div>`;
+  }).join("");
+  holder.querySelectorAll("[data-resolve]").forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        await api(`/api/awaiting-replies/${btn.dataset.resolve}/resolve`, { method: "POST" });
+        loadToday();
+      } catch (e) { toast(e.message, true); }
+    };
+  });
+  holder.querySelectorAll("[data-cancel]").forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        await api(`/api/awaiting-replies/${btn.dataset.cancel}`, { method: "DELETE" });
+        loadToday();
+      } catch (e) { toast(e.message, true); }
+    };
+  });
+}
+
+function renderTodayNeedsReply(count) {
+  const holder = $("#today-needs-reply");
+  if (!count) { holder.innerHTML = `<p class="today-empty">Yanıt bekleyen mail yok.</p>`; return; }
+  holder.innerHTML = `<button class="today-cta" id="today-goto-inbox"><b>${count}</b> mail yanıt bekliyor</button>`;
+  $("#today-goto-inbox").onclick = () => {
+    document.querySelector('.rail-btn[data-view="inbox"]').click();
+    state.activeView = "awaiting";
+    loadEmails();
+  };
+}
+
+function openReminderModal(reminder) {
+  const editing = !!reminder;
+  const localValue = reminder?.remind_at ? reminder.remind_at.replace(" ", "T").slice(0, 16) : "";
+  openModal(`
+    <h3>${editing ? "Hatırlatmayı Düzenle" : "Yeni Hatırlatma"}</h3>
+    <div class="form-col">
+      <input id="rm-text" placeholder="Ne hatırlatılsın?" value="${esc(reminder?.text || "")}">
+      <input id="rm-at" type="datetime-local" value="${localValue}">
+    </div>
+    <div class="modal-actions">
+      <button class="pill ghost" onclick="closeModal()">Vazgeç</button>
+      <button class="pill accent" id="rm-save-btn">${editing ? "Kaydet" : "Hatırlatma Ekle"}</button>
+    </div>`);
+  $("#rm-save-btn").onclick = async () => {
+    const text = $("#rm-text").value.trim();
+    const remindAt = $("#rm-at").value;
+    if (!text) return toast("Hatırlatma metni gerekli", true);
+    if (!remindAt) return toast("Zaman seçin", true);
+    const btn = $("#rm-save-btn");
+    btn.disabled = true;
+    const body = { text, remind_at: remindAt.replace("T", " "), status: reminder?.status || "bekliyor" };
+    try {
+      if (editing) {
+        await api(`/api/reminders/${reminder.id}`, { method: "PUT", body: JSON.stringify(body) });
+        toast("Hatırlatma güncellendi");
+      } else {
+        await api("/api/reminders", { method: "POST", body: JSON.stringify(body) });
+        toast("Hatırlatma eklendi");
+      }
+      closeModal();
+      loadToday();
+    } catch (err) {
+      toast(err.message, true);
+      btn.disabled = false;
+    }
+  };
+}
+
+$("#today-reminder-new").onclick = () => openReminderModal(null);
+
 // ---- Başlatma ----
 
 async function bootApp() {
   try {
-    const EXPECTED_API_VERSION = 17;
+    const EXPECTED_API_VERSION = 20;
     const [status, accounts, cals] = await Promise.all([
       api("/api/status"), api("/api/accounts"), api("/api/calendars"),
     ]);

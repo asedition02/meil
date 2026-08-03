@@ -80,6 +80,7 @@ def gather_context(question: str = "") -> dict:
                                   (today + dt.timedelta(days=14)).isoformat() + "T23:59")
     invoices = database.upcoming_invoices(10)
     docs = database.recent_documents(6)
+    memories = database.list_memories()
 
     # Soru varsa: ilgili mailleri ve belge içeriklerini de ekle
     related_mails, related_docs = [], []
@@ -100,6 +101,7 @@ def gather_context(question: str = "") -> dict:
         "events": events,
         "invoices": invoices,
         "docs": docs,
+        "memories": memories,
         "related_mails": related_mails,
         "related_docs": related_docs,
     }
@@ -115,6 +117,10 @@ def _context_text(ctx: dict, with_bodies: bool = False) -> str:
             "GELEN KUTUSU DURUMU: "
             + ", ".join(f"{k}={v}" for k, v in c.items() if isinstance(v, int))
         )
+
+    if ctx.get("memories"):
+        out.append("\n=== KULLANICI HAKKINDA HATIRLANANLAR ===")
+        out += [f"[hafiza:{m['id']}] {m['content']}" for m in ctx["memories"]]
 
     if ctx["attention"]:
         out.append("\n=== İLGİ BEKLEYEN MAİLLER ===")
@@ -174,7 +180,9 @@ Kesin kurallar:
 - Tarih, saat, tutar ve isimleri verideki gibi aynen aktar.
 - Bir şey veride yoksa "bu konuda bir kayıt yok" de.
 - Bugünün tarihini kullanarak "yarın", "bu hafta" gibi ifadeleri doğru çöz.
-- Mailden bahsederken ilgili mailin ID'sini kaynak olarak belirt."""
+- Mailden bahsederken ilgili mailin ID'sini kaynak olarak belirt.
+- "Kullanıcı hakkında hatırlananlar" bölümündeki bilgileri, ilgiliyse yanıtlarında \
+sessizce kullan — tekrar sorma."""
 
 
 BRIEF_SCHEMA = {
@@ -225,7 +233,8 @@ BRIEF_SCHEMA = {
 
 
 ACTION_TYPES = ["yok", "mail_yanitla", "etkinlik_olustur", "etkinlik_guncelle",
-                "etkinlik_sil", "belge_sil", "belge_yukle", "otomasyon_olustur"]
+                "etkinlik_sil", "belge_sil", "belge_yukle", "otomasyon_olustur",
+                "hafiza_ekle"]
 
 ACTION_SCHEMA = {
     "type": "object",
@@ -277,11 +286,13 @@ ACTION_SCHEMA = {
                 "'desteklenmiyor' yaz (henüz sadece bildirim otomasyonu destekleniyor). İlgisizse boş."
             ),
         },
+        "memory_text": {"type": "string",
+                        "description": "hafiza_ekle için hatırlanacak bilgi; değilse boş."},
     },
     "required": ["type", "summary", "email_id", "reply_text", "event_id",
                  "title", "date", "time", "duration_minutes", "location", "path",
                  "automation_sender", "automation_interval_value",
-                 "automation_interval_unit", "automation_action"],
+                 "automation_interval_unit", "automation_action", "memory_text"],
     "additionalProperties": False,
 }
 
@@ -368,6 +379,11 @@ def ask(question: str, history: list[dict] | None = None, user_name: str = "") -
         "söyle. Bu tür kurallar şimdilik yalnızca 'gönderenden yanıt gelmezse bildir' biçiminde çalışır; "
         "başka bir tetikleyici (ör. 'her sabah özet gönder') istenirse type='yok' bırak ve kullanıcıya "
         "henüz bunun desteklenmediğini söyle."
+        "\n- hafiza_ekle: SADECE kullanıcı açıkça bir şeyi hatırlamanı istediğinde kullan "
+        "('bunu hatırla', 'hatırla ki...', 'unutma ki...', 'not al' gibi). Kullanıcı sırf "
+        "bir bilgi paylaştı diye (ör. 'yarın izinliyim') kendiliğinden hafiza_ekle üretme — "
+        "yalnızca hatırlanmasını AÇIKÇA istediğinde. memory_text'e hatırlanacak bilgiyi kısa, "
+        "üçüncü şahıs bakış açısıyla yaz (ör. 'Cuma günleri toplantı istemiyor')."
         "\nSadece soru soruluyorsa type='yok' bırak. İşlemi SEN yapmıyorsun — hazırladığın işlem "
         "kullanıcıya onay kartı olarak gösterilir, onaylarsa uygulanır. Bunu yanıtında belirt "
         "(ör. 'Hazırladım, onaylarsan gönderiyorum'). Emin olamadığın bir ID veya yol varsa "
@@ -416,6 +432,11 @@ def ask(question: str, history: list[dict] | None = None, user_name: str = "") -
                 action["type"] = "yok"
         elif action["type"] == "otomasyon_olustur":
             action = automations.enrich_action(action)
+        elif action["type"] == "hafiza_ekle":
+            if not (action.get("memory_text") or "").strip():
+                action["type"] = "yok"          # boş bilgi → işlem üretme
+            elif not action.get("summary"):
+                action["summary"] = f"Hatırlanacak: {action['memory_text'][:60]}"
         result["action"] = action
     else:
         result["action"] = {"type": "yok"}
@@ -592,6 +613,32 @@ DONNA_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "remember_fact",
+            "description": (
+                "Kullanıcı hakkında bir bilgiyi kalıcı olarak hatırlar; bundan sonraki tüm "
+                "sohbetlerde bağlama dahil edilir. SADECE kullanıcı açıkça bunu hatırlamanı "
+                "istediğinde çağır ('bunu hatırla', 'hatırla ki...', 'unutma ki...' gibi). "
+                "Kullanıcı sırf bir bilgi paylaştı diye kendiliğinden çağırma."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "Hatırlanacak bilgi, kısa ve üçüncü şahıs bakış açısıyla "
+                            "(ör. 'Cuma günleri toplantı istemiyor')."
+                        ),
+                    },
+                },
+                "required": ["content"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 _TOOL_TO_ACTION = {
@@ -600,13 +647,14 @@ _TOOL_TO_ACTION = {
     "update_calendar_event": "etkinlik_guncelle",
     "delete_calendar_event": "etkinlik_sil",
     "create_automation": "otomasyon_olustur",
+    "remember_fact": "hafiza_ekle",
 }
 
 _EMPTY_ACTION: dict = {
     "type": "yok", "summary": "",
     "email_id": 0, "reply_text": "",
     "event_id": 0, "title": "", "date": "", "time": "",
-    "duration_minutes": 0, "location": "", "path": "",
+    "duration_minutes": 0, "location": "", "path": "", "memory_text": "",
     "automation_sender": "", "automation_interval_value": 0,
     "automation_interval_unit": "", "automation_action": "",
 }
@@ -700,6 +748,13 @@ def _tool_call_to_action(name: str, args: dict, ctx: dict) -> dict:
         })
         action = automations.enrich_action(action)
 
+    elif action_type == "hafiza_ekle":
+        content = (args.get("content") or "").strip()
+        if not content:
+            return {**_EMPTY_ACTION}
+        action["memory_text"] = content
+        action["summary"] = f"Hatırlanacak: {content[:60]}"
+
     else:
         return {**_EMPTY_ACTION}
 
@@ -727,9 +782,11 @@ def ask_with_tools(question: str, history: list[dict] | None = None,
         "\n\nGÖREV: Kullanıcının sorusunu, sana verilen mail/takvim/belge verilerine "
         "dayanarak yanıtla. Yanıtın kısa ve net olsun; gereksiz tekrar yapma.\n"
         "\nİŞLEM ARACLARI: Kullanıcı bir işlem istiyorsa (maile yanıt yaz, etkinlik "
-        "oluştur/güncelle/sil, 'X'ten yanıt gelmezse bildir' türünde bir otomasyon kur) ilgili "
-        "aracı çağır. Ama şu kurallara dikkat et:\n"
+        "oluştur/güncelle/sil, 'X'ten yanıt gelmezse bildir' türünde bir otomasyon kur, "
+        "bir şeyi hatırla) ilgili aracı çağır. Ama şu kurallara dikkat et:\n"
         "- Kullanıcı YALNIZCA soru sorduysa araç çağırma; sadece metin yanıt yaz.\n"
+        "- remember_fact'i SADECE kullanıcı açıkça hatırlamanı istediğinde çağır; bir bilgi "
+        "paylaşması tek başına yeterli değil.\n"
         "- Araç çağırırken kısa bir metin yanıtı da yaz "
         "(orn. 'Hazırladım, onaylarsan gönderiyorum.').\n"
         "- Verideki [mail:ID] veya [etkinlik:ID] değerlerini doğru ID olarak kullan.\n"
@@ -813,5 +870,7 @@ def describe_action(action: dict) -> str:
         itext = action.get("automation_interval_text") or automations.interval_text(
             action.get("automation_interval_value") or 0, action.get("automation_interval_unit") or "gun")
         return f"{action.get('automation_sender') or 'Gönderen'} kişisinden {itext} içinde yanıt gelmezse bildirilecek"
+    if t == "hafiza_ekle":
+        return f"Hatırlanacak: {action.get('memory_text', '')}"
     return ""
 

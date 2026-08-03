@@ -1,9 +1,11 @@
 """Meil — mail tasnif ve yanıt asistanı (FastAPI)."""
+import asyncio
 import datetime as dt
 import json
 import logging
 import secrets
 import time
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,13 +13,24 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import (ai, auth, automations, bulkmail, calendar_client, config, database,
-               dataroom, donna, email_client, extract, ms_oauth)
+from . import (ai, auth, automations, awaiting_reply_notify, bulkmail, calendar_client,
+               config, database, dataroom, donna, email_client, extract, ms_oauth,
+               reminder_notify, scheduler)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("meil")
 
-app = FastAPI(title="Meil — E-posta Asistanı")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(scheduler.run_forever())
+    yield
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+
+app = FastAPI(title="Meil — E-posta Asistanı", lifespan=lifespan)
 database.init_db()
 
 # CORS: arayüz aynı sunucudan servis edildiği için çapraz kaynak gerekmiyor;
@@ -81,6 +94,7 @@ _bootstrap_env_account()
 
 class ReplyRequest(BaseModel):
     reply_text: str
+    await_reply_days: int | None = None   # verilirse "cevap bekliyorum" kaydı oluşturulur
 
 
 class RegenerateRequest(BaseModel):
@@ -111,6 +125,37 @@ class AddToCalendarRequest(BaseModel):
     date: str = ""
     time: str = ""
     duration_minutes: int = 0
+
+
+class TaskRequest(BaseModel):
+    title: str
+    description: str = ""
+    due_date: str = ""             # YYYY-MM-DD; boşsa tarihsiz
+    priority: str = "orta"         # dusuk | orta | yuksek | acil
+    status: str = "yapilacak"      # yapilacak | devam_ediyor | tamamlandi | iptal
+    tags: str = ""                 # virgülle ayrılmış
+    assignee: str = ""             # ilgili kişi
+    related_email_id: int | None = None
+    related_file_path: str = ""
+    related_event_id: int | None = None
+
+
+class TaskCompleteRequest(BaseModel):
+    done: bool = True
+
+
+class ReminderRequest(BaseModel):
+    text: str
+    remind_at: str                 # ISO tarih-saat (YYYY-MM-DDTHH:MM)
+    status: str = "bekliyor"       # bekliyor | tamamlandi | iptal
+    related_email_id: int | None = None
+    related_file_path: str = ""
+    related_event_id: int | None = None
+    related_task_id: int | None = None
+
+
+class ReminderCompleteRequest(BaseModel):
+    done: bool = True
 
 
 class AccountRequest(BaseModel):
@@ -417,6 +462,28 @@ def _sync_account(account: dict) -> dict:
             "checked": len(messages), "errors": errors}
 
 
+def _sync_accounts_list(accounts: list[dict]) -> dict:
+    """Verilen hesapları senkronize eder; yeni mail geldiyse cevap-bekleme
+    kayıtlarını header eşleşmesiyle çözmeyi dener."""
+    results, total_new = [], 0
+    for account in accounts:
+        try:
+            r = _sync_account(account)
+        except (email_client.EmailConfigError, email_client.EmailAuthError) as e:
+            r = {"account": account["email"], "new_emails": 0, "checked": 0, "errors": [str(e)]}
+        except Exception as e:
+            r = {"account": account["email"], "new_emails": 0, "checked": 0,
+                 "errors": [f"Bağlantı hatası: {e}"]}
+        total_new += r["new_emails"]
+        results.append(r)
+    if total_new:
+        try:
+            database.resolve_awaiting_replies_by_headers()
+        except Exception:
+            log.exception("Cevap-bekleme çözümleme hatası (sync sonrası)")
+    return {"new_emails": total_new, "results": results}
+
+
 @app.post("/api/sync")
 def sync_emails(account_id: int | None = None):
     """Tüm hesaplardan (veya tek hesaptan) yeni mailleri çeker ve tasnif eder."""
@@ -429,24 +496,27 @@ def sync_emails(account_id: int | None = None):
             status_code=400,
             detail="Kayıtlı hesap yok. Hesaplar sekmesinden bir mail hesabı ekleyin.",
         )
-    results, total_new = [], 0
-    for account in accounts:
-        try:
-            r = _sync_account(account)
-        except (email_client.EmailConfigError, email_client.EmailAuthError) as e:
-            r = {"account": account["email"], "new_emails": 0, "checked": 0, "errors": [str(e)]}
-        except Exception as e:
-            r = {"account": account["email"], "new_emails": 0, "checked": 0,
-                 "errors": [f"Bağlantı hatası: {e}"]}
-        total_new += r["new_emails"]
-        results.append(r)
+    result = _sync_accounts_list(accounts)
     try:
         new_notifications = automations.check_due()
     except Exception:
         log.exception("Otomasyon kontrolü başarısız")
         new_notifications = []
-    return {"new_emails": total_new, "results": results,
-            "new_notifications": len(new_notifications)}
+    result["new_notifications"] = len(new_notifications)
+    return result
+
+
+def _background_sync_all_accounts():
+    """Zamanlayıcı için: hesap yoksa sessizce çıkar (kurulum sonrası normal bir durum)."""
+    accounts = database.list_accounts(include_password=True)
+    if accounts:
+        _sync_accounts_list(accounts)
+
+
+scheduler.register_job("reminders", reminder_notify.notify_due_reminders)
+scheduler.register_job("awaiting-replies", awaiting_reply_notify.resolve_and_notify)
+scheduler.register_job("account-sync", _background_sync_all_accounts,
+                       every=scheduler.SYNC_EVERY_TICKS)
 
 
 # ---- Mailler ----
@@ -466,6 +536,7 @@ class ComposeRequest(BaseModel):
     subject: str = ""
     body: str
     email_id: int | None = None   # yanıt olarak gönderiliyorsa
+    await_reply_days: int | None = None   # verilirse "cevap bekliyorum" kaydı oluşturulur
 
 
 class ComposeDraftRequest(BaseModel):
@@ -523,6 +594,10 @@ def unarchive_email(email_id: int):
     return {"ok": True}
 
 
+def _days_from_now(days: int) -> str:
+    return (dt.datetime.now() + dt.timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+
 @app.post("/api/compose")
 def compose_send(req: ComposeRequest):
     """Sıfırdan yeni mail gönderir."""
@@ -534,7 +609,7 @@ def compose_send(req: ComposeRequest):
     if not req.body.strip():
         raise HTTPException(status_code=400, detail="Mail metni boş olamaz")
     try:
-        email_client.send_message(
+        message_id = email_client.send_message(
             account, req.to.strip(), req.subject.strip() or "(konu yok)",
             req.body, cc=req.cc,
         )
@@ -542,6 +617,12 @@ def compose_send(req: ComposeRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gönderim başarısız: {e}")
+    if req.await_reply_days and req.await_reply_days > 0:
+        database.create_awaiting_reply({
+            "account_id": req.account_id, "to_email": req.to.strip(),
+            "subject": req.subject.strip(), "message_id": message_id,
+            "due_at": _days_from_now(req.await_reply_days),
+        })
     return {"ok": True}
 
 
@@ -672,7 +753,7 @@ def send_reply(email_id: int, req: ReplyRequest):
                 detail="Bu mailin hangi hesaba ait olduğu belirlenemedi. Hesabı silip yeniden ekleyin ve maili tekrar eşitleyin.",
             )
     try:
-        email_client.send_reply(
+        message_id = email_client.send_reply(
             account=account,
             to_address=email_data["sender_email"],
             subject=email_data["subject"] or "",
@@ -689,6 +770,13 @@ def send_reply(email_id: int, req: ReplyRequest):
         automations.on_reply_sent(email_data)
     except Exception:
         log.exception("Otomasyon bekleme saati başlatılamadı")
+    if req.await_reply_days and req.await_reply_days > 0:
+        database.create_awaiting_reply({
+            "account_id": account["id"], "to_email": email_data["sender_email"],
+            "to_name": email_data.get("sender_name") or "",
+            "subject": email_data["subject"] or "", "message_id": message_id,
+            "due_at": _days_from_now(req.await_reply_days),
+        })
     return {"ok": True}
 
 
@@ -894,6 +982,146 @@ def remove_event(event_id: int):
     if not ev:
         raise HTTPException(status_code=404, detail="Etkinlik bulunamadı")
     database.delete_event(event_id)
+    return {"ok": True}
+
+
+# ---- Görevler (Tasks) ----
+
+def _validate_task_fields(req: "TaskRequest"):
+    if not req.title.strip():
+        raise HTTPException(status_code=400, detail="Görev başlığı gerekli")
+    if req.priority not in database.TASK_PRIORITIES:
+        raise HTTPException(status_code=400, detail="Geçersiz öncelik")
+    if req.status not in database.TASK_STATUSES:
+        raise HTTPException(status_code=400, detail="Geçersiz durum")
+
+
+@app.get("/api/tasks")
+def list_tasks(status: str = "", priority: str = "", tag: str = "", q: str = ""):
+    return {
+        "tasks": database.list_tasks(status=status or None, priority=priority or None,
+                                     tag=tag or None, q=q),
+        "counts": database.task_counts(),
+        "tags": database.task_tags(),
+    }
+
+
+@app.post("/api/tasks")
+def create_task(req: TaskRequest):
+    _validate_task_fields(req)
+    task_id = database.create_task(req.model_dump())
+    return {"ok": True, "task": database.get_task(task_id)}
+
+
+@app.get("/api/tasks/{task_id}")
+def get_task(task_id: int):
+    task = database.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Görev bulunamadı")
+    return {"task": task}
+
+
+@app.put("/api/tasks/{task_id}")
+def edit_task(task_id: int, req: TaskRequest):
+    if not database.get_task(task_id):
+        raise HTTPException(status_code=404, detail="Görev bulunamadı")
+    _validate_task_fields(req)
+    database.update_task(task_id, **req.model_dump())
+    return {"ok": True, "task": database.get_task(task_id)}
+
+
+@app.post("/api/tasks/{task_id}/complete")
+def toggle_task_complete(task_id: int, req: TaskCompleteRequest):
+    if not database.get_task(task_id):
+        raise HTTPException(status_code=404, detail="Görev bulunamadı")
+    database.complete_task(task_id, req.done)
+    return {"ok": True, "task": database.get_task(task_id)}
+
+
+@app.delete("/api/tasks/{task_id}")
+def remove_task(task_id: int):
+    if not database.get_task(task_id):
+        raise HTTPException(status_code=404, detail="Görev bulunamadı")
+    database.delete_task(task_id)
+    return {"ok": True}
+
+
+# ---- Hatırlatmalar (Reminders) ----
+
+def _validate_reminder_fields(req: "ReminderRequest"):
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="Hatırlatma metni gerekli")
+    if not req.remind_at.strip():
+        raise HTTPException(status_code=400, detail="Hatırlatma zamanı gerekli")
+    if req.status not in database.REMINDER_STATUSES:
+        raise HTTPException(status_code=400, detail="Geçersiz durum")
+
+
+@app.get("/api/reminders")
+def list_reminders_endpoint(status: str = "", upto: str = ""):
+    return {"reminders": database.list_reminders(status=status or None, upto=upto or None)}
+
+
+@app.post("/api/reminders")
+def create_reminder(req: ReminderRequest):
+    _validate_reminder_fields(req)
+    reminder_id = database.create_reminder(req.model_dump())
+    return {"ok": True, "reminder": database.get_reminder(reminder_id)}
+
+
+@app.get("/api/reminders/{reminder_id}")
+def get_reminder(reminder_id: int):
+    reminder = database.get_reminder(reminder_id)
+    if not reminder:
+        raise HTTPException(status_code=404, detail="Hatırlatma bulunamadı")
+    return {"reminder": reminder}
+
+
+@app.put("/api/reminders/{reminder_id}")
+def edit_reminder(reminder_id: int, req: ReminderRequest):
+    if not database.get_reminder(reminder_id):
+        raise HTTPException(status_code=404, detail="Hatırlatma bulunamadı")
+    _validate_reminder_fields(req)
+    database.update_reminder(reminder_id, **req.model_dump())
+    return {"ok": True, "reminder": database.get_reminder(reminder_id)}
+
+
+@app.post("/api/reminders/{reminder_id}/complete")
+def toggle_reminder_complete(reminder_id: int, req: ReminderCompleteRequest):
+    if not database.get_reminder(reminder_id):
+        raise HTTPException(status_code=404, detail="Hatırlatma bulunamadı")
+    database.complete_reminder(reminder_id, req.done)
+    return {"ok": True, "reminder": database.get_reminder(reminder_id)}
+
+
+@app.delete("/api/reminders/{reminder_id}")
+def remove_reminder(reminder_id: int):
+    if not database.get_reminder(reminder_id):
+        raise HTTPException(status_code=404, detail="Hatırlatma bulunamadı")
+    database.delete_reminder(reminder_id)
+    return {"ok": True}
+
+
+# ---- Cevap bekliyorum (Awaiting replies) ----
+
+@app.get("/api/awaiting-replies")
+def list_awaiting_replies_endpoint(status: str = ""):
+    return {"awaiting_replies": database.list_awaiting_replies(status=status or None)}
+
+
+@app.post("/api/awaiting-replies/{awaiting_id}/resolve")
+def resolve_awaiting_reply_endpoint(awaiting_id: int):
+    if not database.get_awaiting_reply(awaiting_id):
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı")
+    database.resolve_awaiting_reply(awaiting_id)
+    return {"ok": True, "awaiting_reply": database.get_awaiting_reply(awaiting_id)}
+
+
+@app.delete("/api/awaiting-replies/{awaiting_id}")
+def cancel_awaiting_reply_endpoint(awaiting_id: int):
+    if not database.get_awaiting_reply(awaiting_id):
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı")
+    database.cancel_awaiting_reply(awaiting_id)
     return {"ok": True}
 
 
@@ -1299,7 +1527,11 @@ def dataroom_send(req: SendFileRequest):
 
 class DonnaAskRequest(BaseModel):
     question: str
-    history: list[dict] = []
+    conversation_id: int | None = None
+
+
+class DonnaConversationRequest(BaseModel):
+    title: str
 
 
 @app.get("/api/donna/brief")
@@ -1332,6 +1564,7 @@ class DonnaActionRequest(BaseModel):
     automation_sender: str = ""
     automation_interval_value: int = 0
     automation_interval_unit: str = ""
+    memory_text: str = ""
 
 
 @app.post("/api/donna/act")
@@ -1386,22 +1619,104 @@ def donna_act(req: DonnaActionRequest):
             raise HTTPException(status_code=400, detail=str(e))
         return {"ok": True, "message": "Otomasyon oluşturuldu", "automation": automation}
 
+    if t == "hafiza_ekle":
+        if not req.memory_text.strip():
+            raise HTTPException(status_code=400, detail="Hatırlanacak bilgi boş olamaz")
+        database.create_memory(req.memory_text)
+        return {"ok": True, "message": "Hatırladım"}
+
     raise HTTPException(status_code=400, detail=f"Bilinmeyen işlem: {t}")
 
 
 @app.post("/api/donna/ask")
 def donna_ask(req: DonnaAskRequest):
-    """Donna'ya soru sor — mailler, takvim ve dataroom verilerine dayanır."""
-    if not req.question.strip():
+    """Donna'ya soru sor — mailler, takvim ve dataroom verilerine dayanır.
+
+    Geçmiş artık istemciden değil, verilen (ya da otomatik oluşturulan)
+    konuşmanın DB kaydından okunur; soru + cevap da aynı konuşmaya yazılır.
+    """
+    question = req.question.strip()
+    if not question:
         raise HTTPException(status_code=400, detail="Soru boş olamaz")
     if not ai.available_providers():
         raise HTTPException(status_code=400,
                             detail="Yapay zekâ sağlayıcısı ayarlanmadı — .env dosyasını düzenleyin")
+    conversation_id = req.conversation_id
+    if not conversation_id or not database.get_conversation(conversation_id):
+        conversation_id = database.create_conversation(question[:40])
+    history = [
+        {"role": m["role"], "content": m["content"]}
+        for m in database.get_conversation_messages(conversation_id, limit=12)
+    ]
     try:
-        return donna.ask_with_tools(req.question.strip(), req.history, config.USER_NAME)
+        result = donna.ask_with_tools(question, history, config.USER_NAME)
     except Exception as e:
         log.exception("Donna yanıt hatası")
         raise HTTPException(status_code=502, detail=str(e)[:300])
+    database.add_donna_message(conversation_id, "user", question)
+    database.add_donna_message(conversation_id, "assistant", result.get("answer") or "",
+                               sources=result.get("sources"))
+    result["conversation_id"] = conversation_id
+    return result
+
+
+@app.get("/api/donna/conversations")
+def list_donna_conversations():
+    return {"conversations": database.list_conversations()}
+
+
+@app.post("/api/donna/conversations")
+def create_donna_conversation():
+    conversation_id = database.create_conversation()
+    return {"ok": True, "conversation": database.get_conversation(conversation_id)}
+
+
+@app.get("/api/donna/conversations/{conversation_id}/messages")
+def get_donna_conversation_messages(conversation_id: int):
+    if not database.get_conversation(conversation_id):
+        raise HTTPException(status_code=404, detail="Konuşma bulunamadı")
+    return {"messages": database.get_conversation_messages(conversation_id, limit=200)}
+
+
+@app.put("/api/donna/conversations/{conversation_id}")
+def rename_donna_conversation(conversation_id: int, req: DonnaConversationRequest):
+    if not database.get_conversation(conversation_id):
+        raise HTTPException(status_code=404, detail="Konuşma bulunamadı")
+    if not req.title.strip():
+        raise HTTPException(status_code=400, detail="Başlık boş olamaz")
+    database.rename_conversation(conversation_id, req.title)
+    return {"ok": True, "conversation": database.get_conversation(conversation_id)}
+
+
+@app.delete("/api/donna/conversations/{conversation_id}")
+def delete_donna_conversation(conversation_id: int):
+    if not database.get_conversation(conversation_id):
+        raise HTTPException(status_code=404, detail="Konuşma bulunamadı")
+    database.delete_conversation(conversation_id)
+    return {"ok": True}
+
+
+class MemoryRequest(BaseModel):
+    content: str
+
+
+@app.get("/api/memories")
+def list_memories():
+    return {"memories": database.list_memories()}
+
+
+@app.post("/api/memories")
+def create_memory_endpoint(req: MemoryRequest):
+    if not req.content.strip():
+        raise HTTPException(status_code=400, detail="İçerik boş olamaz")
+    database.create_memory(req.content, source="elle")
+    return {"ok": True, "memories": database.list_memories()}
+
+
+@app.delete("/api/memories/{memory_id}")
+def delete_memory_endpoint(memory_id: int):
+    database.delete_memory(memory_id)
+    return {"ok": True}
 
 
 # ---- Otomasyonlar ----
@@ -1584,47 +1899,79 @@ def bulk_send(req: BulkSendRequest):
         return bulkmail.render_template(src, row)
 
     rows = data["rows"]
+    subject_label = f"(sütun: {req.subject_column})" if req.subject_column else req.subject
+
+    def _campaign(total: int, is_test: bool) -> int | None:
+        """Geçmiş kaydını açar; kayıt hatası gönderimi engellemesin."""
+        try:
+            return database.create_campaign({
+                "account_id": account["id"], "account_email": account["email"],
+                "filename": data.get("filename", ""), "subject": subject_label,
+                "body_preview": (f"(sütun: {req.body_column})" if req.body_column else req.body),
+                "is_html": req.is_html, "is_test": is_test, "total": total,
+            })
+        except Exception:
+            log.exception("Toplu mail geçmişi açılamadı")
+            return None
+
     # Deneme maili: ilk satırın verisiyle tek adrese gönder
     if req.test_to.strip():
         if not bulkmail.is_email(req.test_to):
             raise HTTPException(status_code=400, detail="Deneme adresi geçersiz")
         sample = rows[0] if rows else {}
+        to = req.test_to.strip()
+        subj = row_subject(sample)
+        cid = _campaign(1, True)
         try:
             with email_client.BulkSender(account) as sender:
-                sender.send(req.test_to.strip(),
-                            row_subject(sample),
-                            row_body(sample),
-                            req.is_html, req.from_name)
+                sender.send(to, subj, row_body(sample), req.is_html, req.from_name)
         except Exception as e:
+            if cid:
+                database.add_bulk_recipient(cid, to, subj, "failed", str(e))
+                database.finish_campaign(cid, 0, 1, 0)
             raise HTTPException(status_code=502, detail=f"Deneme maili gönderilemedi: {e}")
-        return {"ok": True, "test": True, "to": req.test_to.strip()}
+        if cid:
+            database.add_bulk_recipient(cid, to, subj, "sent")
+            database.finish_campaign(cid, 1, 0, 0)
+        return {"ok": True, "test": True, "to": to}
 
     delay = max(BULK_MIN_DELAY_MS, int(req.delay_ms or 0)) / 1000.0
 
     def stream():
         sent = failed = skipped = 0
         total = len(rows)
-        yield json.dumps({"type": "start", "total": total}) + "\n"
+        cid = _campaign(total, False)
+        yield json.dumps({"type": "start", "total": total, "campaign_id": cid}) + "\n"
+
+        def record(email: str, subject: str, status: str, error: str = ""):
+            if not cid:
+                return
+            try:
+                database.add_bulk_recipient(cid, email, subject, status, error)
+            except Exception:
+                log.exception("Alıcı kaydı yazılamadı")
+
         try:
             with email_client.BulkSender(account) as sender:
                 for i, row in enumerate(rows):
                     to = str(row.get(req.email_column, "")).strip()
                     if not bulkmail.is_email(to):
                         skipped += 1
+                        record(to or "(boş)", "", "skipped", "Geçersiz e-posta")
                         yield json.dumps({"type": "progress", "index": i, "total": total,
                                           "email": to or "(boş)", "status": "skipped",
                                           "error": "Geçersiz e-posta"}) + "\n"
                         continue
+                    subj = row_subject(row)
                     try:
-                        sender.send(to,
-                                    row_subject(row),
-                                    row_body(row),
-                                    req.is_html, req.from_name)
+                        sender.send(to, subj, row_body(row), req.is_html, req.from_name)
                         sent += 1
+                        record(to, subj, "sent")
                         yield json.dumps({"type": "progress", "index": i, "total": total,
                                           "email": to, "status": "sent"}) + "\n"
                     except Exception as e:
                         failed += 1
+                        record(to, subj, "failed", str(e))
                         yield json.dumps({"type": "progress", "index": i, "total": total,
                                           "email": to, "status": "failed",
                                           "error": str(e)[:200]}) + "\n"
@@ -1633,6 +1980,11 @@ def bulk_send(req: BulkSendRequest):
         except Exception as e:      # bağlantı/kimlik hatası — akışı hatayla bitir
             log.exception("Toplu gönderim hatası")
             yield json.dumps({"type": "error", "error": str(e)[:300]}) + "\n"
+        if cid:
+            try:
+                database.finish_campaign(cid, sent, failed, skipped)
+            except Exception:
+                log.exception("Kampanya kapatılamadı")
         log.info("Toplu gönderim: hesap=%s gönderilen=%d başarısız=%d atlanan=%d",
                  account["email"], sent, failed, skipped)
         yield json.dumps({"type": "done", "total": total, "sent": sent,
@@ -1643,8 +1995,60 @@ def bulk_send(req: BulkSendRequest):
                                       "X-Accel-Buffering": "no"})
 
 
+@app.get("/api/bulk/history")
+def bulk_history(q: str = "", limit: int = 50):
+    """Gönderim geçmişi. `q` verilirse alıcı adresi/konu içinde arar."""
+    if q.strip():
+        return {"mode": "search", "query": q.strip(),
+                "results": database.search_bulk_recipients(q.strip(), min(limit, 500))}
+    return {"mode": "campaigns", "campaigns": database.list_campaigns(min(limit, 200)),
+            "stats": database.bulk_stats()}
+
+
+@app.get("/api/bulk/history/{campaign_id}")
+def bulk_history_detail(campaign_id: int):
+    """Bir gönderimin tüm alıcıları."""
+    camp = database.get_campaign(campaign_id)
+    if not camp:
+        raise HTTPException(status_code=404, detail="Gönderim kaydı bulunamadı")
+    return {"campaign": camp, "recipients": database.list_campaign_recipients(campaign_id)}
+
+
+# ---- Bugün ----
+
+@app.get("/api/today")
+def today_overview():
+    """Bugün ekranı: görevler, hatırlatmalar, etkinlikler, cevap bekleyenler ve
+    (yapay zekâ ayarlıysa) Donna'nın günlük özeti — tek istekte."""
+    now = dt.datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
+    day_start = dt.datetime.combine(now.date(), dt.time.min)
+    day_end = day_start + dt.timedelta(days=1)
+
+    summary = None
+    if ai.available_providers():
+        try:
+            summary = donna.brief(config.USER_NAME)
+        except Exception:
+            log.exception("Bugün özeti üretilemedi")
+
+    open_tasks = [t for t in database.list_tasks(due_before=today_str)
+                 if t["status"] not in ("tamamlandi", "iptal")]
+
+    return {
+        "date": today_str,
+        "summary": summary,
+        "tasks": open_tasks,
+        "reminders": database.list_reminders(status="bekliyor",
+                                             upto=day_end.strftime("%Y-%m-%d %H:%M:%S")),
+        "events": database.list_events(day_start.isoformat(), day_end.isoformat()),
+        "awaiting_replies": database.list_awaiting_replies(status="bekliyor"),
+        "needs_reply_count": database.view_counts().get("awaiting", 0),
+    }
+
+
 # Arayüz (static/app.js) ile el sıkışma için — her API değişikliğinde artırılır.
-API_VERSION = 17
+API_VERSION = 20
 
 
 @app.get("/api/status")

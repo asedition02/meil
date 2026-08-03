@@ -122,6 +122,7 @@ def sample_ctx():
         ],
         "invoices": [],
         "docs": [],
+        "memories": [],
         "related_mails": [],
         "related_docs": [],
     }

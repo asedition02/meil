@@ -23,6 +23,7 @@ from app.donna import _tool_call_to_action, _EMPTY_ACTION
 REQUIRED_FIELDS = {
     "type", "summary", "email_id", "reply_text",
     "event_id", "title", "date", "time", "duration_minutes", "location", "path",
+    "memory_text",
 }
 
 
@@ -278,6 +279,35 @@ class TestDeleteCalendarEvent:
             {"event_id": 0},
             empty_ctx(),
         )
+        assert action["type"] == "yok"
+
+
+# ---------------------------------------------------------------------------
+# remember_fact → hafiza_ekle
+# ---------------------------------------------------------------------------
+
+class TestRememberFact:
+    def test_valid_content_populates_action(self):
+        action = _tool_call_to_action(
+            "remember_fact",
+            {"content": "Cuma günleri toplantı istemiyor"},
+            empty_ctx(),
+        )
+        assert action["type"] == "hafiza_ekle"
+        assert action["memory_text"] == "Cuma günleri toplantı istemiyor"
+        assert "Cuma günleri toplantı istemiyor" in action["summary"]
+        assert_schema_complete(action)
+
+    def test_empty_content_returns_yok(self):
+        action = _tool_call_to_action("remember_fact", {"content": ""}, empty_ctx())
+        assert action["type"] == "yok"
+
+    def test_missing_content_key_returns_yok(self):
+        action = _tool_call_to_action("remember_fact", {}, empty_ctx())
+        assert action["type"] == "yok"
+
+    def test_whitespace_only_content_returns_yok(self):
+        action = _tool_call_to_action("remember_fact", {"content": "   "}, empty_ctx())
         assert action["type"] == "yok"
 
 

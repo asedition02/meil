@@ -66,6 +66,10 @@
   <div id="layout">
     <!-- Sol ray -->
     <nav id="rail">
+      <button class="rail-btn" data-view="today" title="Bugün">
+        <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></span>
+        <span class="rail-label">Bugün</span>
+      </button>
       <button class="rail-btn active" data-view="inbox" title="Posta">
         <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m3 8 8.1 5.4a2 2 0 0 0 1.8 0L21 8"/></svg></span>
         <span class="rail-label">Posta</span>
@@ -81,6 +85,10 @@
       <button class="rail-btn" data-view="bulk" title="Toplu Mail">
         <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="m3 8 6.4 4.3a2 2 0 0 0 2.2 0L18 8"/><path d="M21 9v9a2 2 0 0 1-2 2H8"/></svg></span>
         <span class="rail-label">Toplu Mail</span>
+      </button>
+      <button class="rail-btn" data-view="tasks" title="Görevler">
+        <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="17" rx="3"/><path d="m7.5 12 2.5 2.5L16 9"/></svg></span>
+        <span class="rail-label">Görevler</span>
       </button>
       <button class="rail-btn" data-view="accounts" title="Hesaplar">
         <span class="rail-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 19c.8-3 3.4-5 6.5-5s5.7 2 6.5 5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16.5 14.2c2.4.4 4.3 2 5 4.8"/></svg></span>
@@ -242,7 +250,20 @@
     <main id="view-bulk" class="view" style="display:none">
       <div class="page">
         <h2 class="page-title">Toplu Mail</h2>
-        <p class="page-desc">Excel/CSV listesindeki adreslere <b>kişiselleştirilmiş</b> mail gönderin. Kendi hesabınızın SMTP sunucusu kullanılır; <code>{sütun}</code> yer tutucularıyla her maile kişiye özel içerik yazılır.</p>
+
+        <div class="bulk-tabs">
+          <button class="bulk-tab active" data-btab="send">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 12 16-8-6 16-2.5-6.5L4 12Z"/></svg>
+            Yeni Gönderim
+          </button>
+          <button class="bulk-tab" data-btab="history">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+            Gönderim Geçmişi
+          </button>
+        </div>
+
+        <div id="bulk-pane-send">
+        <p class="page-desc">Excel/CSV/Numbers listesindeki adreslere <b>kişiselleştirilmiş</b> mail gönderin. Kendi hesabınızın SMTP sunucusu kullanılır; <code>{sütun}</code> yer tutucularıyla her maile kişiye özel içerik yazılır.</p>
 
         <!-- 1. Liste -->
         <div class="card form-card">
@@ -317,6 +338,83 @@
             <div class="bulk-log" id="bulk-log"></div>
           </div>
         </div>
+        </div><!-- /bulk-pane-send -->
+
+        <div id="bulk-pane-history" hidden>
+          <p class="page-desc">Bugüne kadar kime, ne zaman, hangi konuyla mail gönderdiğinizin kaydı. Adres veya konu yazarak tüm gönderimlerde arayabilirsiniz.</p>
+          <div class="bh-search">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="bh-q" placeholder="Adres veya konu ara — ör. ayse@ ya da fatura" autocomplete="off">
+            <button class="pill mini" id="bh-clear" hidden>Temizle</button>
+          </div>
+          <div id="bh-stats" class="bh-stats"></div>
+          <div id="bh-body"></div>
+        </div>
+      </div>
+    </main>
+
+    <main id="view-today" class="view" style="display:none">
+      <div class="page">
+        <div id="today-summary" class="today-summary"></div>
+
+        <div class="today-grid">
+          <section class="today-card">
+            <h3>Bugünkü Toplantılar</h3>
+            <div id="today-events" class="today-card-body"></div>
+          </section>
+
+          <section class="today-card">
+            <h3>Açık Görevler</h3>
+            <div id="today-tasks" class="today-card-body"></div>
+          </section>
+
+          <section class="today-card">
+            <div class="today-card-head">
+              <h3>Hatırlatmalar</h3>
+              <button class="pill mini" id="today-reminder-new">+ Yeni</button>
+            </div>
+            <div id="today-reminders" class="today-card-body"></div>
+          </section>
+
+          <section class="today-card">
+            <h3>Cevap Bekleyenler</h3>
+            <div id="today-awaiting" class="today-card-body"></div>
+          </section>
+
+          <section class="today-card">
+            <h3>Yanıt Bekleyen Mailler</h3>
+            <div id="today-needs-reply" class="today-card-body"></div>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <main id="view-tasks" class="view" style="display:none">
+      <div class="page">
+        <div class="tasks-header">
+          <h2 class="page-title">Görevler</h2>
+          <button class="pill accent" id="task-new-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg> Yeni Görev</button>
+        </div>
+        <p class="page-desc">Görev oluşturun, önceliklendirin, ilerlemesini takip edin. Görevleri mail, belge veya takvim etkinlikleriyle ilişkilendirebilirsiniz.</p>
+
+        <div class="tasks-toolbar">
+          <div class="tasks-status-chips" id="task-status-chips"></div>
+          <div class="tasks-filters">
+            <select id="task-priority-filter" class="lp-select" title="Öncelik">
+              <option value="">Tüm öncelikler</option>
+              <option value="acil">Acil</option>
+              <option value="yuksek">Yüksek</option>
+              <option value="orta">Orta</option>
+              <option value="dusuk">Düşük</option>
+            </select>
+            <div class="tasks-search">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+              <input id="task-q" placeholder="Görev, etiket veya kişi ara" autocomplete="off">
+            </div>
+          </div>
+        </div>
+
+        <div id="task-list" class="task-list"></div>
       </div>
     </main>
 
@@ -416,6 +514,12 @@
       <div class="donna-head-actions">
         <button id="donna-automations-btn" class="icon-btn" title="Otomasyonlarım">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        </button>
+        <button id="donna-history-btn" class="icon-btn" title="Sohbetler">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        </button>
+        <button id="donna-memory-btn" class="icon-btn" title="Hafıza">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 4h16v13l-5 3H4Z"/><path d="M15 20v-3a1 1 0 0 1 1-1h3"/></svg>
         </button>
         <button id="donna-refresh" class="icon-btn" title="Brifingi yenile">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>

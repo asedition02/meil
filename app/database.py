@@ -130,6 +130,128 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at TEXT
 );
 
+-- Toplu mail geçmişi: her gönderim bir "kampanya", her alıcı bir satır
+CREATE TABLE IF NOT EXISTS bulk_campaigns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT DEFAULT (datetime('now')),
+    finished_at TEXT,
+    account_id INTEGER,
+    account_email TEXT,
+    filename TEXT,                 -- yüklenen liste dosyasının adı
+    subject TEXT,                  -- sabit konu ya da "(sütun: Konu)"
+    body_preview TEXT,             -- içeriğin ilk bölümü
+    is_html INTEGER DEFAULT 0,
+    is_test INTEGER DEFAULT 0,     -- deneme maili mi
+    total INTEGER DEFAULT 0,
+    sent INTEGER DEFAULT 0,
+    failed INTEGER DEFAULT 0,
+    skipped INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS bulk_recipients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER,
+    email TEXT,
+    subject TEXT,                  -- bu alıcıya giden gerçek konu
+    status TEXT,                   -- sent | failed | skipped
+    error TEXT,
+    sent_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_bulk_rcpt_campaign ON bulk_recipients(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_bulk_rcpt_email ON bulk_recipients(email);
+CREATE INDEX IF NOT EXISTS idx_bulk_camp_started ON bulk_campaigns(started_at DESC);
+
+-- Görevler
+CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    due_date TEXT,                   -- YYYY-MM-DD (boş olabilir)
+    priority TEXT DEFAULT 'orta',    -- dusuk | orta | yuksek | acil
+    status TEXT DEFAULT 'yapilacak', -- yapilacak | devam_ediyor | tamamlandi | iptal
+    tags TEXT DEFAULT '',            -- virgülle ayrılmış etiketler
+    assignee TEXT DEFAULT '',        -- ilgili kişi (ad/e-posta, serbest metin)
+    related_email_id INTEGER,
+    related_file_path TEXT,
+    related_event_id INTEGER,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_date);
+
+-- Hatırlatmalar: görevlerden farklı olarak öncelik/etiket/kişi taşımayan,
+-- yalnızca metin + zamanı olan hafif bir varlık.
+CREATE TABLE IF NOT EXISTS reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    remind_at TEXT NOT NULL,         -- ISO tarih-saat
+    status TEXT DEFAULT 'bekliyor',  -- bekliyor | tamamlandi | iptal
+    related_email_id INTEGER,
+    related_file_path TEXT,
+    related_event_id INTEGER,
+    related_task_id INTEGER,
+    notified_at TEXT,                -- e-posta bildirimi gönderildi mi (tek seferlik)
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_reminders_remind_at ON reminders(remind_at);
+CREATE INDEX IF NOT EXISTS idx_reminders_status ON reminders(status);
+
+-- Cevap bekliyorum: gönderdiğimiz bir mailin karşılığında yanıt gelene kadar
+-- takip edilmesi. Sent klasörü senkronize edilmediği için kayıt gönderim
+-- anında burada oluşturulur; çözümleme, gelen bir mailin in_reply_to/refs
+-- alanında bu satırın message_id'sinin geçip geçmediğine bakar.
+CREATE TABLE IF NOT EXISTS awaiting_replies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER,
+    to_email TEXT NOT NULL,
+    to_name TEXT DEFAULT '',
+    subject TEXT DEFAULT '',
+    message_id TEXT NOT NULL,        -- gönderdiğimiz mailin ürettiğimiz Message-ID'si
+    sent_at TEXT DEFAULT (datetime('now')),
+    due_at TEXT NOT NULL,            -- sent_at + kullanıcının seçtiği gün sayısı
+    status TEXT DEFAULT 'bekliyor',  -- bekliyor | cevaplandi
+    resolved_at TEXT,
+    resolved_email_id INTEGER,       -- otomatik eşleşen gelen mail (varsa)
+    notified_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_awaiting_status ON awaiting_replies(status);
+CREATE INDEX IF NOT EXISTS idx_awaiting_message_id ON awaiting_replies(message_id);
+CREATE INDEX IF NOT EXISTS idx_emails_in_reply_to ON emails(in_reply_to);
+
+-- Kalıcı Donna konuşmaları
+CREATE TABLE IF NOT EXISTS donna_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT DEFAULT 'Yeni sohbet',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_donna_conv_updated ON donna_conversations(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS donna_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL,
+    role TEXT NOT NULL,              -- user | assistant
+    content TEXT NOT NULL,
+    sources TEXT DEFAULT '[]',       -- JSON: kaynak mail listesi (varsa)
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_donna_msg_conv ON donna_messages(conversation_id, id);
+
+-- Donna'nın hatırladığı kullanıcı bilgileri: yalnızca kullanıcı açıkça
+-- "bunu hatırla" dediğinde (onay kartı üzerinden) veya elle eklenir; her
+-- Donna yanıtının bağlamına dahil edilir.
+CREATE TABLE IF NOT EXISTS donna_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    source TEXT DEFAULT 'kullanici_komutu',  -- kullanici_komutu | elle
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_donna_memories_created ON donna_memories(created_at DESC);
+
 CREATE TABLE IF NOT EXISTS auth_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT DEFAULT (datetime('now')),
@@ -340,6 +462,101 @@ def touch_session(token: str, days: int) -> bool:
 def delete_session(token: str):
     with get_db() as db:
         db.execute("DELETE FROM sessions WHERE token = ?", (token,))
+
+
+# ---- Toplu mail geçmişi ----
+
+def create_campaign(data: dict) -> int:
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO bulk_campaigns
+               (account_id, account_email, filename, subject, body_preview,
+                is_html, is_test, total)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (data.get("account_id"), data.get("account_email", ""),
+             data.get("filename", ""), data.get("subject", ""),
+             (data.get("body_preview") or "")[:400],
+             1 if data.get("is_html") else 0,
+             1 if data.get("is_test") else 0,
+             data.get("total", 0)),
+        )
+        return cur.lastrowid
+
+
+def add_bulk_recipient(campaign_id: int, email: str, subject: str,
+                       status: str, error: str = ""):
+    with get_db() as db:
+        db.execute(
+            """INSERT INTO bulk_recipients (campaign_id, email, subject, status, error)
+               VALUES (?,?,?,?,?)""",
+            (campaign_id, email[:200], (subject or "")[:300], status, (error or "")[:300]),
+        )
+
+
+def finish_campaign(campaign_id: int, sent: int, failed: int, skipped: int):
+    with get_db() as db:
+        db.execute(
+            """UPDATE bulk_campaigns
+               SET finished_at = datetime('now'), sent = ?, failed = ?, skipped = ?
+               WHERE id = ?""",
+            (sent, failed, skipped, campaign_id),
+        )
+
+
+def list_campaigns(limit: int = 50) -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT * FROM bulk_campaigns ORDER BY id DESC LIMIT ?""", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_campaign(campaign_id: int) -> dict | None:
+    with get_db() as db:
+        row = db.execute("SELECT * FROM bulk_campaigns WHERE id = ?", (campaign_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def list_campaign_recipients(campaign_id: int, limit: int = 5000) -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT email, subject, status, error, sent_at FROM bulk_recipients
+               WHERE campaign_id = ? ORDER BY id LIMIT ?""",
+            (campaign_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def search_bulk_recipients(q: str, limit: int = 200) -> list[dict]:
+    """Gönderilmiş maillerde ara: alıcı adresi veya konu."""
+    like = f"%{(q or '').strip()}%"
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT r.email, r.subject, r.status, r.error, r.sent_at,
+                      c.id AS campaign_id, c.account_email, c.filename, c.is_test
+               FROM bulk_recipients r
+               JOIN bulk_campaigns c ON c.id = r.campaign_id
+               WHERE r.email LIKE ? OR r.subject LIKE ?
+               ORDER BY r.id DESC LIMIT ?""",
+            (like, like, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def bulk_stats() -> dict:
+    with get_db() as db:
+        row = db.execute(
+            """SELECT COUNT(*) AS campaigns,
+                      COALESCE(SUM(sent), 0) AS sent,
+                      COALESCE(SUM(failed), 0) AS failed
+               FROM bulk_campaigns WHERE is_test = 0"""
+        ).fetchone()
+        uniq = db.execute(
+            "SELECT COUNT(DISTINCT email) AS n FROM bulk_recipients WHERE status = 'sent'"
+        ).fetchone()
+        out = dict(row)
+        out["unique_recipients"] = uniq["n"]
+        return out
 
 
 # ---- Giriş / güvenlik günlüğü ----
@@ -1257,6 +1474,44 @@ def create_automation(data: dict) -> int:
         return cur.lastrowid
 
 
+# ---- Görevler (Tasks) ----
+
+TASK_PRIORITIES = ("dusuk", "orta", "yuksek", "acil")
+TASK_STATUSES = ("yapilacak", "devam_ediyor", "tamamlandi", "iptal")
+
+_TASK_SELECT = """
+    SELECT t.*, e.subject AS related_email_subject,
+           COALESCE(e.sender_name, e.sender_email) AS related_email_sender,
+           ev.title AS related_event_title, ev.start AS related_event_start
+    FROM tasks t
+    LEFT JOIN emails e ON e.id = t.related_email_id
+    LEFT JOIN events ev ON ev.id = t.related_event_id
+"""
+
+
+def create_task(data: dict) -> int:
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO tasks (title, description, due_date, priority, status,
+                                   tags, assignee, related_email_id, related_file_path,
+                                   related_event_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                (data.get("title") or "").strip(),
+                (data.get("description") or "").strip(),
+                data.get("due_date") or None,
+                data.get("priority") or "orta",
+                data.get("status") or "yapilacak",
+                (data.get("tags") or "").strip(),
+                (data.get("assignee") or "").strip(),
+                data.get("related_email_id") or None,
+                data.get("related_file_path") or None,
+                data.get("related_event_id") or None,
+            ),
+        )
+        return cur.lastrowid
+
+
 def list_automations() -> list[dict]:
     with get_db() as db:
         rows = db.execute("SELECT * FROM automations ORDER BY id DESC").fetchall()
@@ -1288,6 +1543,30 @@ def active_automations(trigger_type: str | None = None) -> list[dict]:
     if trigger_type:
         query += " AND trigger_type = ?"
         params.append(trigger_type)
+def list_tasks(status: str | None = None, priority: str | None = None,
+               tag: str | None = None, q: str = "", due_before: str | None = None) -> list[dict]:
+    query = _TASK_SELECT + " WHERE 1=1"
+    params = []
+    if status:
+        query += " AND t.status = ?"
+        params.append(status)
+    if priority:
+        query += " AND t.priority = ?"
+        params.append(priority)
+    if tag:
+        query += " AND (',' || t.tags || ',') LIKE ?"
+        params.append(f"%,{tag},%")
+    if due_before:
+        query += " AND t.due_date IS NOT NULL AND t.due_date != '' AND t.due_date <= ?"
+        params.append(due_before)
+    if q.strip():
+        like = f"%{q.strip()}%"
+        query += " AND (t.title LIKE ? OR t.description LIKE ? OR t.tags LIKE ? OR t.assignee LIKE ?)"
+        params += [like, like, like, like]
+    query += """ ORDER BY
+                 CASE WHEN t.status IN ('tamamlandi', 'iptal') THEN 1 ELSE 0 END,
+                 CASE WHEN t.due_date IS NULL OR t.due_date = '' THEN 1 ELSE 0 END,
+                 t.due_date ASC, t.created_at DESC"""
     with get_db() as db:
         rows = db.execute(query, params).fetchall()
         return [dict(r) for r in rows]
@@ -1370,10 +1649,179 @@ def create_notification(automation_id: int, title: str, body: str,
         return cur.lastrowid
 
 
+def get_task(task_id: int) -> dict | None:
+    with get_db() as db:
+        row = db.execute(_TASK_SELECT + " WHERE t.id = ?", (task_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def update_task(task_id: int, **fields):
+    allowed = {"title", "description", "due_date", "priority", "status", "tags",
+               "assignee", "related_email_id", "related_file_path", "related_event_id"}
+    sets, values = ["updated_at = datetime('now')"], []
+    for key, val in fields.items():
+        if key in allowed:
+            if key in ("title", "description", "tags", "assignee") and isinstance(val, str):
+                val = val.strip()
+            sets.append(f"{key} = ?")
+            values.append(val or None if key in ("due_date", "related_email_id",
+                                                   "related_file_path", "related_event_id") else val)
+    if len(sets) == 1:
+        return
+    if fields.get("status") == "tamamlandi":
+        sets.append("completed_at = datetime('now')")
+    elif "status" in fields:
+        sets.append("completed_at = NULL")
+    values.append(task_id)
+    with get_db() as db:
+        db.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", values)
+
+
+def complete_task(task_id: int, done: bool = True):
+    with get_db() as db:
+        if done:
+            db.execute(
+                """UPDATE tasks SET status = 'tamamlandi', completed_at = datetime('now'),
+                       updated_at = datetime('now') WHERE id = ?""",
+                (task_id,),
+            )
+        else:
+            db.execute(
+                """UPDATE tasks SET status = 'yapilacak', completed_at = NULL,
+                       updated_at = datetime('now') WHERE id = ?""",
+                (task_id,),
+            )
+
+
+def delete_task(task_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+
+
+def task_tags() -> list[str]:
+    """Var olan tüm etiketlerin benzersiz, sıralı listesi (öneri için)."""
+    with get_db() as db:
+        rows = db.execute("SELECT tags FROM tasks WHERE tags != ''").fetchall()
+    seen = set()
+    for r in rows:
+        for t in (r["tags"] or "").split(","):
+            t = t.strip()
+            if t:
+                seen.add(t)
+    return sorted(seen)
+
+
+def task_counts() -> dict:
+    with get_db() as db:
+        rows = db.execute("SELECT status, COUNT(*) AS n FROM tasks GROUP BY status").fetchall()
+    return {r["status"]: r["n"] for r in rows}
+
+
+# ---- Hatırlatmalar (Reminders) ----
+
+REMINDER_STATUSES = ("bekliyor", "tamamlandi", "iptal")
+
+_REMINDER_SELECT = """
+    SELECT r.*, e.subject AS related_email_subject,
+           COALESCE(e.sender_name, e.sender_email) AS related_email_sender,
+           ev.title AS related_event_title, ev.start AS related_event_start,
+           t.title AS related_task_title
+    FROM reminders r
+    LEFT JOIN emails e ON e.id = r.related_email_id
+    LEFT JOIN events ev ON ev.id = r.related_event_id
+    LEFT JOIN tasks t ON t.id = r.related_task_id
+"""
+
+
+def create_reminder(data: dict) -> int:
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO reminders (text, remind_at, status, related_email_id,
+                                       related_file_path, related_event_id, related_task_id)
+               VALUES (?,?,?,?,?,?,?)""",
+            (
+                (data.get("text") or "").strip(),
+                data.get("remind_at"),
+                data.get("status") or "bekliyor",
+                data.get("related_email_id") or None,
+                data.get("related_file_path") or None,
+                data.get("related_event_id") or None,
+                data.get("related_task_id") or None,
+            ),
+        )
+        return cur.lastrowid
+
+
 def list_notifications(limit: int = 20) -> list[dict]:
     with get_db() as db:
         rows = db.execute(
             "SELECT * FROM notifications ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_reminders(status: str | None = None, upto: str | None = None) -> list[dict]:
+    """`upto` verilirse remind_at <= upto olanları da sınırlar (Bugün ekranı için)."""
+    query = _REMINDER_SELECT + " WHERE 1=1"
+    params = []
+    if status:
+        query += " AND r.status = ?"
+        params.append(status)
+    if upto:
+        query += " AND r.remind_at <= ?"
+        params.append(upto)
+    query += " ORDER BY r.remind_at ASC"
+    with get_db() as db:
+        rows = db.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_reminder(reminder_id: int) -> dict | None:
+    with get_db() as db:
+        row = db.execute(_REMINDER_SELECT + " WHERE r.id = ?", (reminder_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def update_reminder(reminder_id: int, **fields):
+    allowed = {"text", "remind_at", "status", "related_email_id",
+               "related_file_path", "related_event_id", "related_task_id"}
+    sets, values = ["updated_at = datetime('now')"], []
+    for key, val in fields.items():
+        if key in allowed:
+            if key == "text" and isinstance(val, str):
+                val = val.strip()
+            if key in ("related_email_id", "related_file_path",
+                       "related_event_id", "related_task_id"):
+                val = val or None
+            sets.append(f"{key} = ?")
+            values.append(val)
+    if len(sets) == 1:
+        return
+    values.append(reminder_id)
+    with get_db() as db:
+        db.execute(f"UPDATE reminders SET {', '.join(sets)} WHERE id = ?", values)
+
+
+def complete_reminder(reminder_id: int, done: bool = True):
+    with get_db() as db:
+        db.execute(
+            "UPDATE reminders SET status = ?, updated_at = datetime('now') WHERE id = ?",
+            ("tamamlandi" if done else "bekliyor", reminder_id),
+        )
+
+
+def delete_reminder(reminder_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+
+
+def due_reminders_unnotified(now_iso: str) -> list[dict]:
+    """Zamanı gelmiş ama henüz e-posta bildirimi gönderilmemiş hatırlatmalar (zamanlayıcı için)."""
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT * FROM reminders
+               WHERE status = 'bekliyor' AND remind_at <= ? AND notified_at IS NULL""",
+            (now_iso,),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -1392,3 +1840,218 @@ def mark_notification_read(notification_id: int):
 def mark_all_notifications_read():
     with get_db() as db:
         db.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0")
+
+
+def mark_reminder_notified(reminder_id: int):
+    with get_db() as db:
+        db.execute(
+            "UPDATE reminders SET notified_at = datetime('now') WHERE id = ?",
+            (reminder_id,),
+        )
+
+
+# ---- Cevap bekliyorum (Awaiting replies) ----
+
+def create_awaiting_reply(data: dict) -> int:
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO awaiting_replies
+               (account_id, to_email, to_name, subject, message_id, due_at)
+               VALUES (?,?,?,?,?,?)""",
+            (
+                data.get("account_id"),
+                (data.get("to_email") or "").strip(),
+                (data.get("to_name") or "").strip(),
+                (data.get("subject") or "").strip(),
+                data["message_id"],
+                data["due_at"],
+            ),
+        )
+        return cur.lastrowid
+
+
+def list_awaiting_replies(status: str | None = None) -> list[dict]:
+    query = "SELECT * FROM awaiting_replies WHERE 1=1"
+    params = []
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    query += " ORDER BY due_at ASC"
+    with get_db() as db:
+        rows = db.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_awaiting_reply(awaiting_id: int) -> dict | None:
+    with get_db() as db:
+        row = db.execute(
+            "SELECT * FROM awaiting_replies WHERE id = ?", (awaiting_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def resolve_awaiting_reply(awaiting_id: int):
+    """Kullanıcının elle 'cevaplandı' işaretlemesi."""
+    with get_db() as db:
+        db.execute(
+            """UPDATE awaiting_replies SET status = 'cevaplandi', resolved_at = datetime('now')
+               WHERE id = ?""",
+            (awaiting_id,),
+        )
+
+
+def cancel_awaiting_reply(awaiting_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM awaiting_replies WHERE id = ?", (awaiting_id,))
+
+
+def resolve_awaiting_replies_by_headers() -> int:
+    """Bekleyen kayıtları, eşleşen bir gelen mail varsa otomatik 'cevaplandi' yapar.
+
+    Eşleşme: gelen mailin in_reply_to alanı ya da refs alanı, bizim
+    ürettiğimiz message_id'yi içeriyorsa. Header'lar düzgün taşınmazsa
+    (bazı istemciler bunu yapmaz) manuel çözümleme yedek olarak kalır.
+    Kaç kaydın çözüldüğünü döner.
+    """
+    with get_db() as db:
+        pending = db.execute(
+            "SELECT id, message_id FROM awaiting_replies WHERE status = 'bekliyor'"
+        ).fetchall()
+        resolved = 0
+        for p in pending:
+            match = db.execute(
+                """SELECT id FROM emails
+                   WHERE in_reply_to = ? OR (refs IS NOT NULL AND refs LIKE ?)
+                   ORDER BY date DESC LIMIT 1""",
+                (p["message_id"], f"%{p['message_id']}%"),
+            ).fetchone()
+            if match:
+                db.execute(
+                    """UPDATE awaiting_replies
+                       SET status = 'cevaplandi', resolved_at = datetime('now'),
+                           resolved_email_id = ? WHERE id = ?""",
+                    (match["id"], p["id"]),
+                )
+                resolved += 1
+        return resolved
+
+
+def due_awaiting_replies_unnotified(now_iso: str) -> list[dict]:
+    """Süresi geçmiş, henüz bildirilmemiş bekleyen kayıtlar (zamanlayıcı için)."""
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT * FROM awaiting_replies
+               WHERE status = 'bekliyor' AND due_at <= ? AND notified_at IS NULL""",
+            (now_iso,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def mark_awaiting_reply_notified(awaiting_id: int):
+    with get_db() as db:
+        db.execute(
+            "UPDATE awaiting_replies SET notified_at = datetime('now') WHERE id = ?",
+            (awaiting_id,),
+        )
+
+
+# ---- Kalıcı Donna konuşmaları ----
+
+def create_conversation(title: str = "") -> int:
+    with get_db() as db:
+        cur = db.execute(
+            "INSERT INTO donna_conversations (title) VALUES (?)",
+            (title.strip()[:120] or "Yeni sohbet",),
+        )
+        return cur.lastrowid
+
+
+def list_conversations() -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT c.*,
+                      (SELECT content FROM donna_messages m WHERE m.conversation_id = c.id
+                       ORDER BY m.id DESC LIMIT 1) AS last_message
+               FROM donna_conversations c ORDER BY c.updated_at DESC"""
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_conversation(conversation_id: int) -> dict | None:
+    with get_db() as db:
+        row = db.execute(
+            "SELECT * FROM donna_conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def rename_conversation(conversation_id: int, title: str):
+    with get_db() as db:
+        db.execute(
+            "UPDATE donna_conversations SET title = ?, updated_at = datetime('now') WHERE id = ?",
+            (title.strip()[:120] or "Yeni sohbet", conversation_id),
+        )
+
+
+def delete_conversation(conversation_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM donna_messages WHERE conversation_id = ?", (conversation_id,))
+        db.execute("DELETE FROM donna_conversations WHERE id = ?", (conversation_id,))
+
+
+def add_donna_message(conversation_id: int, role: str, content: str,
+                      sources: list | None = None) -> int:
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO donna_messages (conversation_id, role, content, sources)
+               VALUES (?,?,?,?)""",
+            (conversation_id, role, content, json.dumps(sources or [], ensure_ascii=False)),
+        )
+        db.execute(
+            "UPDATE donna_conversations SET updated_at = datetime('now') WHERE id = ?",
+            (conversation_id,),
+        )
+        return cur.lastrowid
+
+
+def get_conversation_messages(conversation_id: int, limit: int = 20) -> list[dict]:
+    """En eski→en yeni sırada son `limit` mesaj."""
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT * FROM donna_messages WHERE conversation_id = ?
+               ORDER BY id DESC LIMIT ?""",
+            (conversation_id, limit),
+        ).fetchall()
+    out = []
+    for r in reversed(rows):
+        d = dict(r)
+        try:
+            d["sources"] = json.loads(d["sources"]) if d["sources"] else []
+        except (TypeError, ValueError):
+            d["sources"] = []
+        out.append(d)
+    return out
+
+
+# ---- Donna hafızası ----
+
+def create_memory(content: str, source: str = "kullanici_komutu") -> int:
+    with get_db() as db:
+        cur = db.execute(
+            "INSERT INTO donna_memories (content, source) VALUES (?, ?)",
+            (content.strip()[:500], source),
+        )
+        return cur.lastrowid
+
+
+def list_memories() -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT * FROM donna_memories ORDER BY created_at DESC, id DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_memory(memory_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM donna_memories WHERE id = ?", (memory_id,))
