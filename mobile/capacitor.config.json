@@ -1,0 +1,36 @@
+{
+  "appId": "tr.meil.app",
+  "appName": "Meil",
+  "webDir": "www",
+  "backgroundColor": "#f8fafc",
+  "server": {
+    "url": "https://meil.tr/app",
+    "cleartext": false,
+    "allowNavigation": [
+      "meil.tr",
+      "*.meil.tr",
+      "login.microsoftonline.com",
+      "microsoft.com",
+      "*.microsoft.com",
+      "login.live.com"
+    ]
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "backgroundColor": "#f8fafc",
+    "preferredContentMode": "mobile",
+    "allowsLinkPreview": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 600,
+      "backgroundColor": "#f8fafc",
+      "showSpinner": false,
+      "androidSplashResourceName": "splash"
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#f8fafc"
+    }
+  }
+}
